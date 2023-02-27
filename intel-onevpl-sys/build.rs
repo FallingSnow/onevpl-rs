@@ -1,0 +1,44 @@
+use std::{env, path::PathBuf};
+
+fn main() {
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    println!("cargo:rustc-link-lib=dylib=vpl");
+
+    let libvpl = pkg_config::probe_library("vpl").unwrap();
+    // https://github.com/Intel-Media-SDK/MediaSDK/blob/master/api/include/mfxvideo.h
+    // https://rust-lang.github.io/rust-bindgen/tutorial-3.html
+    let libvpl_include_path = libvpl.include_paths[0].join("vpl");
+    let bindings = bindgen::Builder::default()
+        // The input header we would like to generate
+        // bindings for.
+        .header(libvpl_include_path.join("mfx.h").to_string_lossy())
+        // Tell cargo to invalidate the built crate whenever any of the
+        // included header files changed.
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .dynamic_library_name("vpl")
+        // Finish the builder and generate the bindings.
+        .generate()
+        // Unwrap the Result and panic on failure.
+        .expect("Unable to generate bindings");
+
+    bindings
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings!");
+
+    // #[cfg(feature = "va")]
+    // {
+    //     println!("cargo:rustc-link-lib=dylib=va-drm");
+    //     let libvadrm = pkg_config::probe_library("libva-drm").unwrap();
+    //     let libvadrm_include_path = libvadrm.include_paths[0].join("va");
+    //     let bindings = bindgen::Builder::default()
+    //         .header(libvadrm_include_path.join("va_drm.h").to_string_lossy())
+    //         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+    //         .generate()
+    //         .expect("Unable to generate bindings");
+
+    //     bindings
+    //         .write_to_file(out_path.join("bindings_va.rs"))
+    //         .expect("Couldn't write bindings!");
+    // }
+}
