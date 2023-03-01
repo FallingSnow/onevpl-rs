@@ -5,14 +5,22 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["va"]
+default = ["va", "metrics"]
 va = ["libva"]
+metrics = []
 
 [dependencies]
 once_cell = "1.17.1"
 intel-onevpl-sys = { version = "0.1.0", path = "intel-onevpl-sys" }
 libloading = "0.7.4"
 libva = { package = "cros-libva", version = "0.0.1", optional = true }
+tracing = "0.1.37"
+bitflags = "1.3.2"
+tokio = { version = "1.25.0", features = ["rt", "macros"] }
+enum-repr = "0.2.6"
 
 [workspace]
 members = ["intel-onevpl-sys"]
+
+[dev-dependencies]
+tracing-test = "0.2.4"

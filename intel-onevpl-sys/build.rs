@@ -17,6 +17,10 @@ fn main() {
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .dynamic_library_name("vpl")
+        .derive_debug(true)
+        .impl_debug(true)
+        // https://github.com/rust-lang/rust-bindgen/issues/2221
+        .no_debug("mfx3DLutSystemBuffer")
         // Finish the builder and generate the bindings.
         .generate()
         // Unwrap the Result and panic on failure.
