@@ -102,26 +102,9 @@ pub enum Codec {
     AV1 = ffi::MFX_CODEC_AV1,
 }
 
-// impl TryFrom<u32> for Codec {
-//     type Error = ffi::MfxStatus;
-
-//     fn try_from(value: u32) -> Result<Self, Self::Error> {
-//         let codec = match value {
-//             ffi::MFX_CODEC_AVC => Codec::AVC,
-//             ffi::MFX_CODEC_HEVC => Codec::HEVC,
-//             ffi::MFX_CODEC_MPEG2 => Codec::MPEG2,
-//             ffi::MFX_CODEC_VC1 => Codec::VC1,
-//             ffi::MFX_CODEC_CAPTURE => Codec::CAPTURE,
-//             ffi::MFX_CODEC_VP9 => Codec::VP9,
-//             ffi::MFX_CODEC_AV1 => Codec::AV1,
-//             _ => return Err(ffi::MfxStatus::NotFound),
-//         };
-//         Ok(codec)
-//     }
-// }
-
 #[EnumRepr(type = "u32")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[doc = " This enum itemizes implementation type."]
 pub enum Impl {
     #[doc = "< Pure Software Implementation."]
     Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
@@ -144,4 +127,24 @@ bitflags! {
         const SYSTEM_MEMORY = Self::IN_SYSTEM_MEMORY.bits | Self::OUT_SYSTEM_MEMORY.bits;
         const VIDEO_MEMORY = Self::IN_VIDEO_MEMORY.bits | Self::OUT_VIDEO_MEMORY.bits;
     }
+}
+
+bitflags! {
+    #[doc = " The BitstreamDataFlag enumerator uses bit-ORed values to itemize additional information about the bitstream buffer."]
+    pub struct BitstreamDataFlags: u16 {
+        #[doc = "The bitstream buffer contains a complete frame or complementary field pair of data for the bitstream. For decoding, this means\nthat the decoder can proceed with this buffer without waiting for the start of the next frame, which effectively reduces decoding latency.\nIf this flag is set, but the bitstream buffer contains incomplete frame or pair of field, then decoder will produce corrupted output."]
+        const COMPLETE_FRAME = ffi::MFX_BITSTREAM_COMPLETE_FRAME as u16;
+#[doc = "The bitstream buffer contains the end of the stream. For decoding,\nthis means that the application does not have any additional bitstream data to send to decoder."]
+        const END_OF_STREAM = ffi::MFX_BITSTREAM_EOS as u16;
+    }
+}
+
+#[doc = " The mfxSkipMode enumerator describes the decoder skip-mode options."]
+#[EnumRepr(type = "u32")]
+pub enum SkipMode {
+    NoSkip = ffi::mfxSkipMode_MFX_SKIPMODE_NOSKIP,
+    #[doc = " Do not skip any frames."]
+    More = ffi::mfxSkipMode_MFX_SKIPMODE_MORE,
+    #[doc = " Skip more frames."]
+    Less = ffi::mfxSkipMode_MFX_SKIPMODE_LESS,
 }

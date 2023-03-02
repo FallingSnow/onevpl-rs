@@ -1,11 +1,12 @@
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use std::{
     io::{self, Write},
     mem,
     ops::Deref,
-    time::Instant,
 };
 
-use constants::{Codec, FourCC, IoPattern};
+use constants::{BitstreamDataFlags, Codec, FourCC, IoPattern, SkipMode};
 use ffi::{
     mfxBitstream, mfxConfig, mfxLoader, mfxSession, mfxStructVersion,
     mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, mfxVariantType_MFX_VARIANT_TYPE_U32,
@@ -14,14 +15,14 @@ use ffi::{
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::constants::MemoryFlag;
 
 // use crate::callback_future::CbFuture;
 
 // mod callback_future;
-mod constants;
+pub mod constants;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -299,7 +300,6 @@ impl io::Read for FrameSurface<'_> {
 
                     // U
                     let u_start = (self.read_offset + bytes_written - total_y_size) / w;
-                    dbg!(u_start, h);
                     for i in u_start..h {
                         let offset = i * pitch;
                         let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
@@ -420,12 +420,9 @@ impl<'a> Decoder<'a> {
         Ok(decoder)
     }
 
-    pub async fn decode(
-        &self,
-        bitstream: Option<&mut Bitstream<'_>>,
-    ) -> Result<FrameSurface, MfxStatus> {
-        #[cfg(feature = "metrics")]
-        let decode_start = Instant::now();
+    pub fn decode(&self, bitstream: Option<&mut Bitstream<'_>>) -> Result<FrameSurface, MfxStatus> {
+        // #[cfg(feature = "metrics")]
+        // let decode_start = Instant::now();
         let lib = LIBRARY.get().unwrap();
 
         // If bitstream is null than we are draining
@@ -438,7 +435,7 @@ impl<'a> Decoder<'a> {
         let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
 
         let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
-        dbg!(sync_point, output_surface);
+        // dbg!(sync_point, output_surface);
 
         let status: MfxStatus = unsafe {
             lib.MFXVideoDECODE_DecodeFrameAsync(
@@ -452,7 +449,7 @@ impl<'a> Decoder<'a> {
         }
         .into();
 
-        dbg!(sync_point, output_surface);
+        // dbg!(sync_point, output_surface);
 
         trace!("Decode frame start = {:?}", status);
 
@@ -493,10 +490,28 @@ impl<'a> Decoder<'a> {
             return Err(status);
         }
 
-        #[cfg(feature = "metrics")]
-        trace!("Decoded: {:?}", decode_start.elapsed());
+        // #[cfg(feature = "metrics")]
+        // trace!("Decoded: {:?}", decode_start.elapsed());
 
         Ok(output_surface)
+    }
+
+    /// The application may use this API function to increase decoding performance by sacrificing output quality. See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-setskipmode for more info.
+    pub fn set_skip(&mut self, mode: SkipMode) -> Result<(), MfxStatus> {
+        let lib = LIBRARY.get().unwrap();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXVideoDECODE_SetSkipMode(self.session.inner, mode.repr()) }.into();
+
+        // dbg!(sync_point, output_surface);
+
+        trace!("Decode frame start = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        Ok(())
     }
 }
 
@@ -510,6 +525,7 @@ impl<'a> Drop for Decoder<'a> {
 pub struct Session {
     inner: mfxSession,
 }
+
 impl Session {
     #[tracing::instrument]
     pub(crate) fn new(loader: &mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
@@ -550,6 +566,11 @@ impl Session {
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
+        }
+
+        if unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo.FourCC } == 0 {
+            error!("Decoded header returned 0 for data format");
+            return Err(MfxStatus::MoreData);
         }
 
         Ok(params)
@@ -647,14 +668,12 @@ impl MFXVideoParams {
 
 #[derive(Debug)]
 pub struct Bitstream<'a> {
-    pub buffer: &'a mut [u8],
+    buffer: &'a mut [u8],
     pub(crate) inner: mfxBitstream,
 }
 
 impl<'a> Bitstream<'a> {
     /// Creates a data source/destination for encoded/decoded/processed data
-    ///
-    /// If source already contains data for the session to use, be sure to use `[Bitstream::set_len]` to set how many bytes of data the buffer contains
     #[tracing::instrument]
     pub fn with_codec(buffer: &'a mut [u8], codec: Codec) -> Self {
         let mut bitstream: mfxBitstream = unsafe { mem::zeroed() };
@@ -671,8 +690,49 @@ impl<'a> Bitstream<'a> {
         Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.CodecId }).unwrap()
     }
 
-    pub fn set_len(&mut self, len: u32) {
-        self.inner.DataLength = len;
+    /// The size of the backing buffer
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// The amount of data currently in the bitstream
+    pub fn size(&self) -> u32 {
+        self.inner.DataLength
+    }
+
+    pub fn set_flags(&mut self, flags: BitstreamDataFlags) {
+        self.inner.DataFlag = flags.bits();
+    }
+}
+
+impl io::Write for Bitstream<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let data_offset = self.inner.DataOffset as usize;
+        let data_len = self.inner.DataLength as usize;
+
+        let slice = &mut self.buffer;
+
+        if data_len >= slice.len() {
+            return Ok(0);
+        }
+
+        if data_offset > 0 {
+            // Move all data after DataOffset to the beginning of Data
+            let data_end = data_offset + data_len;
+            slice.copy_within(data_offset..data_end, 0);
+            self.inner.DataOffset = 0;
+        }
+
+        let free_buffer_len = slice.len() - data_len;
+        let copy_len = usize::min(free_buffer_len, buf.len());
+        slice[data_len..data_len + copy_len].copy_from_slice(&buf[..copy_len]);
+        self.inner.DataLength += copy_len as u32;
+
+        Ok(copy_len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -688,14 +748,12 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
-    use crate::constants::{Impl, Codec};
+    use crate::constants::{Codec, Impl};
 
     use super::*;
     use tracing_test::traced_test;
 
-    const DEFAULT_BUFFER_SIZE: usize = 1024 * 200; // 200kB
+    const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
     #[test]
     #[traced_test]
@@ -706,11 +764,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32(
-                "mfxImplDescription.Impl",
-                Impl::Software.repr(),
-                None,
-            )
+            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -742,19 +796,18 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn decode_hevc_file() {
+    async fn decode_hevc_file_frame() {
         init().unwrap();
 
         // Open file to read from
-        let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
-        let mut output = std::fs::File::create("/tmp/output.yuv").unwrap();
+        let file = std::fs::File::open("tests/frozen.hevc").unwrap();
 
         let mut loader = Loader::new().unwrap();
 
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software as u32, None)
+            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -762,7 +815,7 @@ mod tests {
         config
             .set_filter_property_u32(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC as u32,
+                Codec::HEVC.repr(),
                 None,
             )
             .unwrap();
@@ -781,8 +834,10 @@ mod tests {
 
         let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
         let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
-        let bytes_read = file.read(bitstream.buffer).unwrap();
-        bitstream.set_len(bytes_read as u32);
+        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+        let bytes_read =
+            io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
+        assert_ne!(bytes_read, 0);
 
         let mut params = session
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
@@ -791,11 +846,139 @@ mod tests {
         let decoder = session.decoder(&mut params).unwrap();
 
         {
-            let mut frame = decoder.decode(Some(&mut bitstream)).await.unwrap();
+            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
+            // wait for frame
             frame.synchronize().unwrap();
-            frame.map().unwrap();
-            let bytes = io::copy(&mut frame, &mut output).unwrap();
-            dbg!(bytes);
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn decode_hevc_file_video() {
+        init().unwrap();
+
+        // Open file to read from
+        let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
+
+        let mut loader = Loader::new().unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set software decoding
+        config
+            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set decode HEVC
+        config
+            .set_filter_property_u32(
+                "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
+                Codec::HEVC.repr(),
+                None,
+            )
+            .unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set required API version to 2.2
+        config
+            .set_filter_property_u32(
+                "mfxImplDescription.ApiVersion.Version",
+                (2u32 << 16) + 2,
+                None,
+            )
+            .unwrap();
+
+        let mut session = loader.new_session(0).unwrap();
+
+        let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
+        let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
+        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+        let bytes_read = io::copy(
+            &mut io::Read::take(&mut file, free_buffer_len),
+            &mut bitstream,
+        )
+        .unwrap();
+        assert_ne!(bytes_read, 0);
+
+        let mut params = session
+            .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
+            .unwrap();
+
+        let decoder = session.decoder(&mut params).unwrap();
+
+        loop {
+            let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+            let bytes_read = io::copy(
+                &mut io::Read::take(&mut file, free_buffer_len),
+                &mut bitstream,
+            )
+            .unwrap();
+
+            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
+            // wait for frame
+            frame.synchronize().unwrap();
+
+            if bytes_read == 0 {
+                break;
+            }
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn decode_hevc_1080p_file_frame() {
+        init().unwrap();
+
+        // Open file to read from
+        let file = std::fs::File::open("tests/frozen1080.hevc").unwrap();
+
+        let mut loader = Loader::new().unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set software decoding
+        config
+            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set decode HEVC
+        config
+            .set_filter_property_u32(
+                "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
+                Codec::HEVC.repr(),
+                None,
+            )
+            .unwrap();
+
+        let config = loader.new_config().unwrap();
+        // Set required API version to 2.2
+        config
+            .set_filter_property_u32(
+                "mfxImplDescription.ApiVersion.Version",
+                (2u32 << 16) + 2,
+                None,
+            )
+            .unwrap();
+
+        let mut session = loader.new_session(0).unwrap();
+
+        let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
+        let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
+        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+        let bytes_read =
+            io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
+        assert_ne!(bytes_read, 0);
+
+        let mut params = session
+            .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
+            .unwrap();
+
+        let decoder = session.decoder(&mut params).unwrap();
+
+        {
+            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
+            // wait for frame
+            frame.synchronize().unwrap();
         }
     }
 }
