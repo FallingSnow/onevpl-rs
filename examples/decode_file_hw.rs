@@ -2,7 +2,7 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, constants, init, Bitstream, Loader};
+use onevpl::{self, constants, init, AcceleratorHandle, Bitstream, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -21,7 +21,7 @@ pub async fn main() {
     config
         .set_filter_property_u32(
             "mfxImplDescription.Impl",
-            constants::Impl::Software.repr(),
+            constants::Impl::Hardware.repr(),
             None,
         )
         .unwrap();
@@ -45,6 +45,11 @@ pub async fn main() {
             None,
         )
         .unwrap();
+
+    // Try to get the default accelerator
+    let accel_handle = AcceleratorHandle::vaapi_from_file(None).unwrap();
+
+    loader.set_accelerator(accel_handle).unwrap();
 
     let mut session = loader.new_session(0).unwrap();
 
@@ -98,7 +103,6 @@ pub async fn main() {
             }
             Err(e) => panic!("{:?}", e),
         };
-
         io::copy(&mut frame, &mut output).unwrap();
     }
 }

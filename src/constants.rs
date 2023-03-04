@@ -69,6 +69,28 @@ pub enum FourCC {
     BGRP = ffi::MFX_FOURCC_BGRP,
 }
 
+#[doc = " This enum itemizes hardware acceleration stack to use."]
+#[EnumRepr(type = "u32")]
+pub enum AccelerationMode {
+    #[doc = "< Hardware acceleration is not applicable."]
+    NA = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_NA,
+    #[doc = "< Hardware acceleration goes through the Microsoft* Direct3D9* infrastructure."]
+    D3D9 = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_D3D9,
+    #[doc = "< Hardware acceleration goes through the Microsoft* Direct3D11* infrastructure."]
+    D3D11 = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_D3D11,
+    #[doc = "< Hardware acceleration goes through the Linux* VA-API infrastructure or through the Linux* VA-API infrastructure with DRM RENDER MODE as default acceleration access point."]
+    VAAPI = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_VAAPI,
+    #[doc = "< Hardware acceleration goes through the Linux* VA-API infrastructure with DRM MODESET as  default acceleration access point."]
+    VAAPIDrmModeset = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_VAAPI_DRM_MODESET,
+    VAAPIGLX = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_VAAPI_GLX,
+    #[doc = "< Hardware acceleration goes through the Linux* VA-API infrastructure with X11 as default acceleration access point."]
+    VAAPIX11 = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_VAAPI_X11,
+    #[doc = "< Hardware acceleration goes through the Linux* VA-API infrastructure with Wayland as default acceleration access point."]
+    VAAPIWayland = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_VAAPI_WAYLAND,
+    #[doc = "< Hardware acceleration goes through the HDDL* Unite*."]
+    HDDLUNITE = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_HDDLUNITE,
+}
+
 bitflags! {
     #[doc = " The mfxMemoryFlags enumerator specifies memory access mode."]
     pub struct MemoryFlag: u32 {
@@ -134,7 +156,7 @@ bitflags! {
     pub struct BitstreamDataFlags: u16 {
         #[doc = "The bitstream buffer contains a complete frame or complementary field pair of data for the bitstream. For decoding, this means\nthat the decoder can proceed with this buffer without waiting for the start of the next frame, which effectively reduces decoding latency.\nIf this flag is set, but the bitstream buffer contains incomplete frame or pair of field, then decoder will produce corrupted output."]
         const COMPLETE_FRAME = ffi::MFX_BITSTREAM_COMPLETE_FRAME as u16;
-#[doc = "The bitstream buffer contains the end of the stream. For decoding,\nthis means that the application does not have any additional bitstream data to send to decoder."]
+        #[doc = "The bitstream buffer contains the end of the stream. For decoding,\nthis means that the application does not have any additional bitstream data to send to decoder."]
         const END_OF_STREAM = ffi::MFX_BITSTREAM_EOS as u16;
     }
 }

@@ -1,4 +1,5 @@
-#[cfg(feature = "metrics")]
+use std::ffi::c_void;
+use std::fs::File;
 use std::time::Instant;
 use std::{
     io::{self, Write},
@@ -9,12 +10,13 @@ use std::{
 use constants::{BitstreamDataFlags, Codec, FourCC, IoPattern, SkipMode};
 use ffi::{
     mfxBitstream, mfxConfig, mfxLoader, mfxSession, mfxStructVersion,
-    mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, mfxVariantType_MFX_VARIANT_TYPE_U32,
-    mfxVariant_data, MfxStatus,
+    mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, mfxVariantType_MFX_VARIANT_TYPE_PTR,
+    mfxVariantType_MFX_VARIANT_TYPE_U32, mfxVariant_data, MfxStatus,
 };
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
+use tokio::task;
 use tracing::{debug, error, trace};
 
 use crate::constants::MemoryFlag;
@@ -30,7 +32,7 @@ static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 #[derive(Debug)]
 pub struct Loader {
     inner: mfxLoader,
-    // configs: Configs
+    accelerator: Option<AcceleratorHandle>,
 }
 impl Loader {
     #[tracing::instrument]
@@ -42,13 +44,30 @@ impl Loader {
         }
         debug!("New loader created");
 
-        Ok(Self { inner: loader })
+        Ok(Self {
+            inner: loader,
+            accelerator: None,
+        })
     }
+
     pub fn new_config(&mut self) -> Result<Config, MfxStatus> {
         Config::new(self)
     }
+
     pub fn new_session(&mut self, index: mfxU32) -> Result<Session, MfxStatus> {
         Session::new(self, index)
+    }
+
+    /// Usually you want to open `/dev/dri/renderD128` and pass that in a [`AcceleratorHandle::VAAPI`].
+    pub fn set_accelerator(&mut self, handle: AcceleratorHandle) -> Result<(), MfxStatus> {
+        let config = self.new_config().unwrap();
+        config.set_filter_property_u32("mfxHandleType", handle.mfx_type(), None)?;
+        let config = self.new_config().unwrap();
+        config.set_filter_property_ptr("mfxHDL", *handle.handle(), None)?;
+
+        self.accelerator = Some(handle);
+
+        Ok(())
     }
 }
 
@@ -118,47 +137,62 @@ impl Config {
 
         Ok(())
     }
+
+    #[tracing::instrument]
+    pub fn set_filter_property_ptr(
+        self,
+        name: &str,
+        value: *mut c_void,
+        version: Option<mfxStructVersion>,
+    ) -> Result<(), MfxStatus> {
+        let lib = LIBRARY.get().unwrap();
+        let version = version.unwrap_or(mfxStructVersion {
+            __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
+        });
+
+        let mut name = name.to_string();
+        // CStrings need to nul terminated
+        name.push('\0');
+
+        let variant = mfxVariant {
+            Version: version,
+            Type: mfxVariantType_MFX_VARIANT_TYPE_PTR,
+            Data: mfxVariant_data { Ptr: value },
+        };
+
+        let status =
+            unsafe { lib.MFXSetConfigFilterProperty(self.inner, name.as_ptr(), variant) }.into();
+
+        debug!(
+            "Setting filter property [{} = {:?}] : {:?}",
+            name, value, status
+        );
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        Ok(())
+    }
 }
-
-// struct DecodeFrameFuture {
-//     sync_point: ffi::mfxSyncPoint,
-//     output_surface: *mut ffi::mfxFrameSurface1,
-// }
-
-// impl Future for DecodeFrameFuture {
-//     type Output = *mut ffi::mfxFrameSurface1;
-
-//     fn poll(
-//         self: std::pin::Pin<&mut Self>,
-//         cx: &mut std::task::Context<'_>,
-//     ) -> std::task::Poll<Self::Output> {
-//         let surface: ffi::mfxFrameSurface1 = unsafe { *self.output_surface };
-//         let frame_interface: ffi::mfxFrameSurfaceInterface =
-//             unsafe { *surface.__bindgen_anon_1.FrameInterface };
-//         // let sync_func = frame_interface.OnComplete = ;
-//         // sts = unsafe { sync_func(decSurfaceOut,
-//         //             WAIT_100_MILLISECONDS) };
-//         // if (MFX_ERR_NONE == sts) {
-//         // sts = WriteRawFrame_InternalMem(decSurfaceOut, sink);
-//         // VERIFY(MFX_ERR_NONE == sts, "Could not write decode output");
-
-//         // framenum++;
-//         // }
-
-//         Poll::Pending
-//     }
-// }
 
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
 }
 
+unsafe impl Send for FrameSurface<'_> {}
+
 impl FrameSurface<'_> {
     /// Guarantees readiness of both the data (pixels) and any frame's meta information (for example corruption flags) after a function completes. See [`ffi::mfxFrameSurfaceInterface::Synchronize`] for more info.
-    pub fn synchronize(&mut self) -> Result<(), MfxStatus> {
+    /// 
+    /// Setting timeout to None defaults to 100 (in milliseconds)
+    ///
+    /// [`Decoder::decode`] calls this automatically.
+    pub fn synchronize(&mut self, timeout: Option<u32>) -> Result<(), MfxStatus> {
+        let timeout = timeout.unwrap_or(100);
         let sync_func = self.interface().Synchronize.unwrap();
-        let status: MfxStatus = unsafe { sync_func(self.inner, 100) }.into();
+        let status: MfxStatus = unsafe { sync_func(self.inner, timeout) }.into();
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -269,6 +303,7 @@ impl io::Read for FrameSurface<'_> {
                     for i in y_start..h {
                         let offset = i * pitch;
                         let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
                         let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
 
                         // This vector write implementation is not very good because it gets all the slices (entire frame) even though we might end up only writing a couple slices. So it has a lot of overhead.
@@ -303,6 +338,7 @@ impl io::Read for FrameSurface<'_> {
                     for i in u_start..h {
                         let offset = i * pitch;
                         let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
                         let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
                         #[cfg(feature = "vector-write")]
                         {
@@ -331,6 +367,7 @@ impl io::Read for FrameSurface<'_> {
                     for i in v_start..h {
                         let offset = i * pitch;
                         let ptr = unsafe { data.__bindgen_anon_5.V.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
                         let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
                         #[cfg(feature = "vector-write")]
                         {
@@ -358,6 +395,55 @@ impl io::Read for FrameSurface<'_> {
                     }
                     // dbg!(io_slices.len(), bytes_written);
                     // assert_eq!(buffers_written, (h as usize) * 2);
+                }
+                FourCC::NV12 => {
+                    let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
+
+                    // Y
+                    let y_start = self.read_offset / w;
+                    let total_y_size = w * h;
+                    // dbg!(pitch, w, y_start, h, self.read_offset);
+                    for i in y_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        dbg!(i, offset, ptr, h, w, y_start);
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
+                        }
+                        bytes_written += bytes;
+                    }
+
+                    let h = h / 2;
+
+                    // U
+                    let u_start = (self.read_offset + bytes_written - total_y_size) / w;
+                    for i in u_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_4.UV.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
+                        }
+                        bytes_written += bytes;
+                    }
                 }
                 // case MFX_FOURCC_NV12:
                 //     // Y
@@ -420,9 +506,12 @@ impl<'a> Decoder<'a> {
         Ok(decoder)
     }
 
-    pub fn decode(&self, bitstream: Option<&mut Bitstream<'_>>) -> Result<FrameSurface, MfxStatus> {
-        // #[cfg(feature = "metrics")]
-        // let decode_start = Instant::now();
+    pub async fn decode(
+        &self,
+        bitstream: Option<&mut Bitstream<'_>>,
+        timeout: Option<u32>
+    ) -> Result<FrameSurface, MfxStatus> {
+        let decode_start = Instant::now();
         let lib = LIBRARY.get().unwrap();
 
         // If bitstream is null than we are draining
@@ -457,41 +546,18 @@ impl<'a> Decoder<'a> {
             return Err(status);
         }
 
-        let output_surface = FrameSurface::try_from(output_surface)?;
+        let mut output_surface = FrameSurface::try_from(output_surface)?;
 
-        // // This lets us set a callback on mfx structure and turn it into a future
-        // let callback = {
-        //     let cb: CbFuture<&mut ffi::mfxFrameSurface1> = CbFuture::new();
-        //     // let func: unsafe extern "C" fn(sts: ffi::mfxStatus) = unsafe { transmute(|sts: i32| {
-        //     //     println!("Done!")
-        //     // })};
+        let output_surface = task::spawn_blocking(move || {
+            output_surface.synchronize(timeout)?;
+            Ok(output_surface) as Result<FrameSurface, MfxStatus>
+        })
+        .await
+        .unwrap()?;
 
-        //     cb.publish(result)
-
-        //     fn func(status: i32) {
-        //         println!("Decode done");
-        //     }
-        //     let func_ptr =
-        //     func as fn(sts: i32);
-        //     let func_ptr: unsafe extern "C" fn(sts: i32) = unsafe { std::mem::transmute(func_ptr) };
-
-        //     let surface: ffi::mfxFrameSurface1 = unsafe { *output_surface };
-        //     let mut frame_interface: ffi::mfxFrameSurfaceInterface =
-        //         unsafe { *surface.__bindgen_anon_1.FrameInterface };
-        //     frame_interface.OnComplete = Some(func_ptr);
-        //     cb
-        // };
-
-        // Ok(callback.await)
+        trace!("Decoded: {:?}", decode_start.elapsed());
 
         trace!("Decoded frame = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        // #[cfg(feature = "metrics")]
-        // trace!("Decoded: {:?}", decode_start.elapsed());
 
         Ok(output_surface)
     }
@@ -522,6 +588,59 @@ impl<'a> Drop for Decoder<'a> {
     }
 }
 
+#[derive(Debug)]
+pub enum AcceleratorHandle {
+    VAAPI((File, *mut c_void)),
+}
+
+impl AcceleratorHandle {
+    #[cfg(target_os = "linux")]
+    /// If None is provided for file, a file at `/dev/dri/renderD128` is used.
+    // TODO: We really should search /dev/dri/renderD128 - /dev/dri/renderD200 if file is None
+    pub fn vaapi_from_file(file: Option<File>) -> Result<Self, MfxStatus> {
+        use std::os::fd::AsRawFd;
+        let file = file.unwrap_or_else(|| {
+            File::options()
+                .read(true)
+                .write(true)
+                .open("/dev/dri/renderD128")
+                .unwrap()
+        });
+
+        let display = unsafe { libva_sys::va_display_drm::vaGetDisplayDRM(file.as_raw_fd()) };
+
+        if display.is_null() {
+            return Err(MfxStatus::InvalidHandle);
+        }
+
+        let va_status = unsafe { libva_sys::va_display_drm::vaInitialize(display, &mut 0, &mut 0) };
+
+        trace!("Initialized va display = {}", va_status);
+
+        Ok(Self::VAAPI((file, display)))
+    }
+    pub fn handle(&self) -> &*mut c_void {
+        match self {
+            AcceleratorHandle::VAAPI((_, handle)) => &handle,
+        }
+    }
+    pub fn mfx_type(&self) -> u32 {
+        match self {
+            AcceleratorHandle::VAAPI(_) => ffi::mfxHandleType_MFX_HANDLE_VA_DISPLAY,
+        }
+    }
+}
+
+impl Drop for AcceleratorHandle {
+    fn drop(&mut self) {
+        match self {
+            AcceleratorHandle::VAAPI((_, va_display)) => {
+                unsafe { libva_sys::va_display_drm::vaTerminate(*va_display) };
+            },
+        }
+    }
+}
+
 pub struct Session {
     inner: mfxSession,
 }
@@ -537,6 +656,8 @@ impl Session {
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
+
+        debug!("Created a new session");
 
         Ok(Self { inner: session })
     }
@@ -575,39 +696,6 @@ impl Session {
 
         Ok(params)
     }
-
-    #[cfg(feature = "va")]
-    pub fn set_accelerator(&self) -> Result<(), MfxStatus> {
-        // let display = libva::Display::open_drm_display("/dev/dri/renderD128").unwrap();
-        // let lib = LIBRARY.get().unwrap();
-        // let status: MfxStatus = unsafe {
-        //     lib.MFXVideoCORE_SetHandle(self.inner, ffi::mfxHandleType_MFX_HANDLE_VA_DISPLAY, display.handle())
-        // }
-        // .into();
-
-        // if status == MfxStatus::NoneOrDone {
-        //     return Err(status);
-        // }
-        todo!();
-        // if ((impl & MFX_IMPL_VIA_VAAPI) == MFX_IMPL_VIA_VAAPI) {
-        //     VADisplay va_dpy = NULL;
-        //     int fd;
-        //     // initialize VAAPI context and set session handle (req in Linux)
-        //     fd = open("/dev/dri/renderD128", O_RDWR);
-        //     if (fd >= 0) {
-        //         va_dpy = vaGetDisplayDRM(fd);
-        //         if (va_dpy) {
-        //             int major_version = 0, minor_version = 0;
-        //             if (VA_STATUS_SUCCESS == vaInitialize(va_dpy, &major_version, &minor_version)) {
-        //                 MFXVideoCORE_SetHandle(session,
-        //                                        static_cast<mfxHandleType>(MFX_HANDLE_VA_DISPLAY),
-        //                                        va_dpy);
-        //             }
-        //         }
-        //     }
-        //     return va_dpy;
-        // }
-    }
 }
 
 impl Drop for Session {
@@ -628,6 +716,8 @@ pub fn init() -> Result<&'static ffi::vpl, libloading::Error> {
 
     // FIXME: Check for failure (unwrap/expect)
     LIBRARY.set(lib);
+
+    debug!("Dynamic library loaded successfully");
 
     Ok(LIBRARY.get().unwrap())
 }
@@ -845,11 +935,7 @@ mod tests {
 
         let decoder = session.decoder(&mut params).unwrap();
 
-        {
-            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
-            // wait for frame
-            frame.synchronize().unwrap();
-        }
+        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
     }
 
     #[traced_test]
@@ -914,9 +1000,7 @@ mod tests {
             )
             .unwrap();
 
-            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
-            // wait for frame
-            frame.synchronize().unwrap();
+            let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
 
             if bytes_read == 0 {
                 break;
@@ -975,10 +1059,6 @@ mod tests {
 
         let decoder = session.decoder(&mut params).unwrap();
 
-        {
-            let mut frame = decoder.decode(Some(&mut bitstream)).unwrap();
-            // wait for frame
-            frame.synchronize().unwrap();
-        }
+        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
     }
 }
