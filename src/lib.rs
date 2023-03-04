@@ -7,17 +7,16 @@ use std::{
     ops::Deref,
 };
 
-use constants::{BitstreamDataFlags, Codec, FourCC, IoPattern, SkipMode};
+use constants::{BitstreamDataFlags, Codec, FourCC, Implementation, IoPattern, SkipMode};
 use ffi::{
     mfxBitstream, mfxConfig, mfxLoader, mfxSession, mfxStructVersion,
-    mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, mfxVariantType_MFX_VARIANT_TYPE_PTR,
-    mfxVariantType_MFX_VARIANT_TYPE_U32, mfxVariant_data, MfxStatus,
+    mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, MfxStatus,
 };
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
 use tokio::task;
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 use crate::constants::MemoryFlag;
 
@@ -37,7 +36,7 @@ pub struct Loader {
 impl Loader {
     #[tracing::instrument]
     pub fn new() -> Result<Self, MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         let loader = unsafe { lib.MFXLoad() };
         if loader.is_null() {
             return Err(MfxStatus::Unknown);
@@ -61,9 +60,9 @@ impl Loader {
     /// Usually you want to open `/dev/dri/renderD128` and pass that in a [`AcceleratorHandle::VAAPI`].
     pub fn set_accelerator(&mut self, handle: AcceleratorHandle) -> Result<(), MfxStatus> {
         let config = self.new_config().unwrap();
-        config.set_filter_property_u32("mfxHandleType", handle.mfx_type(), None)?;
+        config.set_filter_property("mfxHandleType", handle.mfx_type().into(), None)?;
         let config = self.new_config().unwrap();
-        config.set_filter_property_ptr("mfxHDL", *handle.handle(), None)?;
+        config.set_filter_property("mfxHDL", (*handle.handle()).into(), None)?;
 
         self.accelerator = Some(handle);
 
@@ -81,8 +80,48 @@ impl Deref for Loader {
 
 impl Drop for Loader {
     fn drop(&mut self) {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         unsafe { lib.MFXUnload(self.inner) };
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum FilterProperty {
+    I32(i32),
+    U32(u32),
+    Ptr(*mut std::ffi::c_void),
+}
+impl FilterProperty {
+    pub fn filter_type(&self) -> u32 {
+        match self {
+            FilterProperty::I32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_I32,
+            FilterProperty::U32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_U32,
+            FilterProperty::Ptr(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_PTR,
+        }
+    }
+    pub(crate) fn data(&self) -> ffi::mfxVariant_data {
+        use ffi::mfxVariant_data;
+        match *self {
+            FilterProperty::I32(value) => mfxVariant_data { I32: value },
+            FilterProperty::U32(value) => mfxVariant_data { U32: value },
+            FilterProperty::Ptr(value) => mfxVariant_data { Ptr: value },
+        }
+    }
+}
+
+impl From<u32> for FilterProperty {
+    fn from(value: u32) -> Self {
+        Self::U32(value)
+    }
+}
+impl From<i32> for FilterProperty {
+    fn from(value: i32) -> Self {
+        Self::I32(value)
+    }
+}
+impl From<*mut std::ffi::c_void> for FilterProperty {
+    fn from(value: *mut std::ffi::c_void) -> Self {
+        Self::Ptr(value)
     }
 }
 
@@ -93,7 +132,7 @@ pub struct Config {
 impl Config {
     #[tracing::instrument]
     pub(crate) fn new(loader: &mut Loader) -> Result<Self, MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         let config = unsafe { lib.MFXCreateConfig(loader.inner) };
         if config.is_null() {
             return Err(MfxStatus::Unknown);
@@ -102,13 +141,13 @@ impl Config {
     }
 
     #[tracing::instrument]
-    pub fn set_filter_property_u32(
+    pub fn set_filter_property(
         self,
         name: &str,
-        value: u32,
+        value: FilterProperty,
         version: Option<mfxStructVersion>,
     ) -> Result<(), MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         let version = version.unwrap_or(mfxStructVersion {
             __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
         });
@@ -117,10 +156,13 @@ impl Config {
         // CStrings need to nul terminated
         name.push('\0');
 
+        let _type = value.filter_type();
+        let data = value.data();
+
         let variant = mfxVariant {
             Version: version,
-            Type: mfxVariantType_MFX_VARIANT_TYPE_U32,
-            Data: mfxVariant_data { U32: value },
+            Type: _type,
+            Data: data,
         };
 
         let status =
@@ -128,7 +170,7 @@ impl Config {
 
         debug!(
             "Setting filter property [{} = {:?}] : {:?}",
-            name, value, status
+            name, data, status
         );
 
         if status != MfxStatus::NoneOrDone {
@@ -138,42 +180,42 @@ impl Config {
         Ok(())
     }
 
-    #[tracing::instrument]
-    pub fn set_filter_property_ptr(
-        self,
-        name: &str,
-        value: *mut c_void,
-        version: Option<mfxStructVersion>,
-    ) -> Result<(), MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
-        let version = version.unwrap_or(mfxStructVersion {
-            __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
-        });
+    // #[tracing::instrument]
+    // pub fn set_filter_property_ptr(
+    //     self,
+    //     name: &str,
+    //     value: *mut c_void,
+    //     version: Option<mfxStructVersion>,
+    // ) -> Result<(), MfxStatus> {
+    //     let lib = get_library().unwrap();
+    //     let version = version.unwrap_or(mfxStructVersion {
+    //         __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
+    //     });
 
-        let mut name = name.to_string();
-        // CStrings need to nul terminated
-        name.push('\0');
+    //     let mut name = name.to_string();
+    //     // CStrings need to nul terminated
+    //     name.push('\0');
 
-        let variant = mfxVariant {
-            Version: version,
-            Type: mfxVariantType_MFX_VARIANT_TYPE_PTR,
-            Data: mfxVariant_data { Ptr: value },
-        };
+    //     let variant = mfxVariant {
+    //         Version: version,
+    //         Type: mfxVariantType_MFX_VARIANT_TYPE_PTR,
+    //         Data: ffi::mfxVariant_data { Ptr: value },
+    //     };
 
-        let status =
-            unsafe { lib.MFXSetConfigFilterProperty(self.inner, name.as_ptr(), variant) }.into();
+    //     let status =
+    //         unsafe { lib.MFXSetConfigFilterProperty(self.inner, name.as_ptr(), variant) }.into();
 
-        debug!(
-            "Setting filter property [{} = {:?}] : {:?}",
-            name, value, status
-        );
+    //     debug!(
+    //         "Setting filter property [{} = {:?}] : {:?}",
+    //         name, value, status
+    //     );
 
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
+    //     if status != MfxStatus::NoneOrDone {
+    //         return Err(status);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }
 
 pub struct FrameSurface<'a> {
@@ -185,8 +227,8 @@ unsafe impl Send for FrameSurface<'_> {}
 
 impl FrameSurface<'_> {
     /// Guarantees readiness of both the data (pixels) and any frame's meta information (for example corruption flags) after a function completes. See [`ffi::mfxFrameSurfaceInterface::Synchronize`] for more info.
-    /// 
-    /// Setting timeout to None defaults to 100 (in milliseconds)
+    ///
+    /// Setting `timeout` to None defaults to 100 (in milliseconds)
     ///
     /// [`Decoder::decode`] calls this automatically.
     pub fn synchronize(&mut self, timeout: Option<u32>) -> Result<(), MfxStatus> {
@@ -407,7 +449,7 @@ impl io::Read for FrameSurface<'_> {
                         let offset = i * pitch;
                         let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
                         debug_assert!(!ptr.is_null());
-                        dbg!(i, offset, ptr, h, w, y_start);
+                        // dbg!(i, offset, ptr, h, w, y_start);
                         let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
 
                         // We don't want to write a portion of a slice, only whole slices
@@ -490,7 +532,7 @@ impl<'a> Decoder<'a> {
         session: &'a mut Session,
         params: &mut MFXVideoParams,
     ) -> Result<Self, MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
 
         let status: MfxStatus =
             unsafe { lib.MFXVideoDECODE_Init(session.inner, &mut params.inner) }.into();
@@ -506,13 +548,20 @@ impl<'a> Decoder<'a> {
         Ok(decoder)
     }
 
+    /// Decodes the input bitstream to a single output frame. This async
+    /// function automatically calls synchronize to wait for the frame to be
+    /// decoded.
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-decodeframeasync
+    /// for more info.
     pub async fn decode(
         &self,
         bitstream: Option<&mut Bitstream<'_>>,
-        timeout: Option<u32>
+        timeout: Option<u32>,
     ) -> Result<FrameSurface, MfxStatus> {
         let decode_start = Instant::now();
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
 
         // If bitstream is null than we are draining
         let bitstream = if let Some(bitstream) = bitstream {
@@ -548,6 +597,9 @@ impl<'a> Decoder<'a> {
 
         let mut output_surface = FrameSurface::try_from(output_surface)?;
 
+        output_surface.synchronize(timeout)?;
+
+
         let output_surface = task::spawn_blocking(move || {
             output_surface.synchronize(timeout)?;
             Ok(output_surface) as Result<FrameSurface, MfxStatus>
@@ -562,9 +614,11 @@ impl<'a> Decoder<'a> {
         Ok(output_surface)
     }
 
-    /// The application may use this API function to increase decoding performance by sacrificing output quality. See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-setskipmode for more info.
+    /// The application may use this API function to increase decoding performance by sacrificing output quality.
+    ///
+    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-setskipmode for more info.
     pub fn set_skip(&mut self, mode: SkipMode) -> Result<(), MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
 
         let status: MfxStatus =
             unsafe { lib.MFXVideoDECODE_SetSkipMode(self.session.inner, mode.repr()) }.into();
@@ -579,11 +633,55 @@ impl<'a> Decoder<'a> {
 
         Ok(())
     }
+
+    /// Stops the current decoding operation and restores internal structures or
+    /// parameters for a new decoding operation.
+    ///
+    /// Reset serves two purposes:
+    /// * It recovers the decoder from errors.
+    /// * It restarts decoding from a new position
+    ///
+    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-reset for more info.
+    pub fn reset(&mut self, params: &mut MFXVideoParams) -> Result<(), MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXVideoDECODE_Reset(self.session.inner, &mut params.inner) }.into();
+
+        trace!("Decode reset = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        Ok(())
+    }
+
+    /// Retrieves current working parameters.
+    ///
+    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-getvideoparam for more info.
+    pub fn get_params(&mut self) -> Result<MFXVideoParams, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut params = MFXVideoParams::new();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXVideoDECODE_GetVideoParam(self.session.inner, &mut params.inner) }
+                .into();
+
+        trace!("Decode get params = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        Ok(params)
+    }
 }
 
 impl<'a> Drop for Decoder<'a> {
     fn drop(&mut self) {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         unsafe { lib.MFXVideoDECODE_Close(self.session.inner) };
     }
 }
@@ -636,7 +734,7 @@ impl Drop for AcceleratorHandle {
         match self {
             AcceleratorHandle::VAAPI((_, va_display)) => {
                 unsafe { libva_sys::va_display_drm::vaTerminate(*va_display) };
-            },
+            }
         }
     }
 }
@@ -648,7 +746,7 @@ pub struct Session {
 impl Session {
     #[tracing::instrument]
     pub(crate) fn new(loader: &mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         let mut session: mfxSession = unsafe { mem::zeroed() };
         let status: MfxStatus =
             unsafe { lib.MFXCreateSession(loader.inner, index, &mut session) }.into();
@@ -672,7 +770,7 @@ impl Session {
         bitstream: &mut Bitstream,
         io_pattern: IoPattern,
     ) -> Result<MFXVideoParams, MfxStatus> {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
 
         let mut params = MFXVideoParams::new();
         params.set_codec(bitstream.codec());
@@ -683,30 +781,48 @@ impl Session {
         }
         .into();
 
+        let format =
+            FourCC::from_repr(unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo.FourCC })
+                .unwrap();
+
         trace!("Decode header = {:?}", status);
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
 
-        if unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo.FourCC } == 0 {
-            error!("Decoded header returned 0 for data format");
-            return Err(MfxStatus::MoreData);
-        }
+        trace!("Decode output format = {:?}", format);
 
         Ok(params)
+    }
+
+    pub fn implementation(&self) -> Result<Implementation, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut implementation = 0i32;
+
+        let status: MfxStatus = unsafe { lib.MFXQueryIMPL(self.inner, &mut implementation) }.into();
+
+        trace!("Session implementation = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let implementation = Implementation::from_repr(implementation as u32).unwrap();
+
+        Ok(implementation)
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let lib = LIBRARY.get().unwrap();
+        let lib = get_library().unwrap();
         unsafe { lib.MFXClose(self.inner) };
     }
 }
 
-#[tracing::instrument]
-pub fn init() -> Result<&'static ffi::vpl, libloading::Error> {
+pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
     if let Some(vpl) = LIBRARY.get() {
         return Ok(vpl);
     }
@@ -719,7 +835,7 @@ pub fn init() -> Result<&'static ffi::vpl, libloading::Error> {
 
     debug!("Dynamic library loaded successfully");
 
-    Ok(LIBRARY.get().unwrap())
+    Ok(get_library().unwrap())
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -838,7 +954,7 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::{Codec, Impl};
+    use crate::constants::{Codec, Implementation};
 
     use super::*;
     use tracing_test::traced_test;
@@ -848,21 +964,24 @@ mod tests {
     #[test]
     #[traced_test]
     fn create_session() {
-        init().unwrap();
         let mut loader = Loader::new().unwrap();
 
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                Implementation::Software.repr().into(),
+                None,
+            )
             .unwrap();
 
         let config = loader.new_config().unwrap();
         // Set decode HEVC
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr(),
+                Codec::HEVC.repr().into(),
                 None,
             )
             .unwrap();
@@ -870,9 +989,9 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set required API version to 2.2
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                (2u32 << 16) + 2,
+                ((2u32 << 16) + 2).into(),
                 None,
             )
             .unwrap();
@@ -887,8 +1006,6 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn decode_hevc_file_frame() {
-        init().unwrap();
-
         // Open file to read from
         let file = std::fs::File::open("tests/frozen.hevc").unwrap();
 
@@ -897,15 +1014,19 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                Implementation::Software.repr().into(),
+                None,
+            )
             .unwrap();
 
         let config = loader.new_config().unwrap();
         // Set decode HEVC
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr(),
+                Codec::HEVC.repr().into(),
                 None,
             )
             .unwrap();
@@ -913,9 +1034,9 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set required API version to 2.2
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                (2u32 << 16) + 2,
+                ((2u32 << 16) + 2).into(),
                 None,
             )
             .unwrap();
@@ -941,8 +1062,6 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn decode_hevc_file_video() {
-        init().unwrap();
-
         // Open file to read from
         let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
 
@@ -951,15 +1070,19 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                Implementation::Software.repr().into(),
+                None,
+            )
             .unwrap();
 
         let config = loader.new_config().unwrap();
         // Set decode HEVC
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr(),
+                Codec::HEVC.repr().into(),
                 None,
             )
             .unwrap();
@@ -967,9 +1090,9 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set required API version to 2.2
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                (2u32 << 16) + 2,
+                ((2u32 << 16) + 2).into(),
                 None,
             )
             .unwrap();
@@ -1011,8 +1134,6 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn decode_hevc_1080p_file_frame() {
-        init().unwrap();
-
         // Open file to read from
         let file = std::fs::File::open("tests/frozen1080.hevc").unwrap();
 
@@ -1021,15 +1142,19 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property_u32("mfxImplDescription.Impl", Impl::Software.repr(), None)
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                Implementation::Software.repr().into(),
+                None,
+            )
             .unwrap();
 
         let config = loader.new_config().unwrap();
         // Set decode HEVC
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr(),
+                Codec::HEVC.repr().into(),
                 None,
             )
             .unwrap();
@@ -1037,9 +1162,9 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set required API version to 2.2
         config
-            .set_filter_property_u32(
+            .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                (2u32 << 16) + 2,
+                ((2u32 << 16) + 2).into(),
                 None,
             )
             .unwrap();

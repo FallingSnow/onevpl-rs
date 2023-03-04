@@ -21,4 +21,5 @@ libva-sys = "0.1.2"
 members = ["intel-onevpl-sys"]
 
 [dev-dependencies]
+tracing-subscriber = "0.3.16"
 tracing-test = "0.2.4"

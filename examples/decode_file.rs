@@ -2,13 +2,14 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, constants, init, Bitstream, Loader};
+use onevpl::{constants, Bitstream, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() {
-    init().unwrap();
+    // Setup basic logger
+    tracing_subscriber::fmt::init();
 
     // Open file to read from
     let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
@@ -19,19 +20,15 @@ pub async fn main() {
     let config = loader.new_config().unwrap();
     // Set software decoding
     config
-        .set_filter_property_u32(
-            "mfxImplDescription.Impl",
-            constants::Impl::Software.repr(),
-            None,
-        )
+        .set_filter_property("mfxImplDescription.Impl", constants::Implementation::Software.repr().into(), None)
         .unwrap();
 
     let config = loader.new_config().unwrap();
     // Set decode HEVC
     config
-        .set_filter_property_u32(
+        .set_filter_property(
             "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-            constants::Codec::HEVC.repr(),
+            constants::Codec::HEVC.repr().into(),
             None,
         )
         .unwrap();
@@ -39,17 +36,22 @@ pub async fn main() {
     let config = loader.new_config().unwrap();
     // Set required API version to 2.2
     config
-        .set_filter_property_u32(
+        .set_filter_property(
             "mfxImplDescription.ApiVersion.Version",
-            (2u32 << 16) + 2,
+            ((2u32 << 16) + 2).into(),
             None,
         )
         .unwrap();
 
     let mut session = loader.new_session(0).unwrap();
 
+    // Create a backing buffer that will contain the bitstream we are trying to decode
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
     let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::HEVC);
+
+    // We get the size of the buffer and subtract the amount of the buffer that
+    // is used to get how much free buffer is available. io::copy will fail if
+    // it's only able to copy a portion of what you tell it to copy.
     let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
     let bytes_read = io::copy(
         &mut io::Read::take(&mut file, free_buffer_len),
@@ -58,6 +60,7 @@ pub async fn main() {
     .unwrap();
     assert_ne!(bytes_read, 0);
 
+    // Get information about the bitstream we are about to decode
     let mut params = session
         .decode_header(&mut bitstream, constants::IoPattern::OUT_SYSTEM_MEMORY)
         .unwrap();
@@ -72,6 +75,7 @@ pub async fn main() {
         )
         .unwrap();
 
+        // We try to decode a frame every iteration. You could
         let mut frame = match decoder.decode(Some(&mut bitstream), None).await {
             Ok(frame) => frame,
             Err(e) if e == MfxStatus::MoreData => {
@@ -88,8 +92,10 @@ pub async fn main() {
         }
     }
 
-    // Now the flush the decoder pass None to decode
-    // "The application must set bs to NULL to signal end of stream. The application may need to call this API function several times to drain any internally cached frames until the function returns MFX_ERR_MORE_DATA."
+    // Now the flush the decoder pass None to decode. "The application must set
+    // bs to NULL to signal end of stream. The application may need to call this
+    // API function several times to drain any internally cached frames until
+    // the function returns MFX_ERR_MORE_DATA."
     loop {
         let mut frame = match decoder.decode(None, None).await {
             Ok(frame) => frame,

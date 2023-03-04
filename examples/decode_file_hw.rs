@@ -2,13 +2,13 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, constants, init, AcceleratorHandle, Bitstream, Loader};
+use onevpl::{self, constants, AcceleratorHandle, Bitstream, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() {
-    init().unwrap();
+    tracing_subscriber::fmt::init();
 
     // Open file to read from
     let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
@@ -19,19 +19,15 @@ pub async fn main() {
     let config = loader.new_config().unwrap();
     // Set software decoding
     config
-        .set_filter_property_u32(
-            "mfxImplDescription.Impl",
-            constants::Impl::Hardware.repr(),
-            None,
-        )
+        .set_filter_property("mfxImplDescription.Impl", constants::Implementation::Hardware.repr().into(), None)
         .unwrap();
 
     let config = loader.new_config().unwrap();
     // Set decode HEVC
     config
-        .set_filter_property_u32(
+        .set_filter_property(
             "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-            constants::Codec::HEVC.repr(),
+            constants::Codec::HEVC.repr().into(),
             None,
         )
         .unwrap();
@@ -39,9 +35,9 @@ pub async fn main() {
     let config = loader.new_config().unwrap();
     // Set required API version to 2.2
     config
-        .set_filter_property_u32(
+        .set_filter_property(
             "mfxImplDescription.ApiVersion.Version",
-            (2u32 << 16) + 2,
+            ((2u32 << 16) + 2).into(),
             None,
         )
         .unwrap();
@@ -52,6 +48,8 @@ pub async fn main() {
     loader.set_accelerator(accel_handle).unwrap();
 
     let mut session = loader.new_session(0).unwrap();
+
+    // dbg!(session.implementation().unwrap());
 
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
     let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::HEVC);

@@ -127,12 +127,23 @@ pub enum Codec {
 #[EnumRepr(type = "u32")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[doc = " This enum itemizes implementation type."]
-pub enum Impl {
+pub enum Implementation {
     #[doc = "< Pure Software Implementation."]
     Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
     #[doc = "< Hardware Accelerated Implementation."]
     Hardware = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE,
 }
+
+// // #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+// bitflags! {
+//     #[doc = " This enum itemizes implementation type."]
+//     pub struct Implementation: u32 {
+//         #[doc = "< Pure Software Implementation."]
+//         const SOFTWARE = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE;
+//         #[doc = "< Hardware Accelerated Implementation."]
+//         const HARDWARE = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE;
+//     }
+// }
 
 bitflags! {
     #[doc = " The IOPattern enumerator itemizes memory access patterns for API functions. Use bit-ORed values to specify an input access\npattern and an output access pattern."]
