@@ -1,8 +1,20 @@
-///! This example decodes an hevc encoded file (tests/frozen.hevc) and produces a raw YUV 4:2:0 8 bit file at /tmp/output.yuv
+///! This example decodes an hevc encoded file (tests/frozen.hevc) and produces
+///! a raw YUV 4:2:0 8 bit file at `/tmp/output.yuv`.
+///!
+///! There are 3 (modern) ways to intialize hardware acceleration.
+///! 1. You define the implementation as HARDWARE and the intel API does
+///!    everything for you. Which is what we do in this example. Sweet!
+///! 2. You define the implementation as HARDWARE and assign an accelerator
+///!    handle to the loader.
+///! 3. You define the implementation as HARDWARE and assign an accelerator
+///!    handle to the session. (Not entirely recommended but AFAIK not
+///!    deprecated)
+///!
+///! This library supports all 3 methods.
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, constants, AcceleratorHandle, Bitstream, Loader};
+use onevpl::{self, constants, Bitstream, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -16,11 +28,12 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
 
-    // Set software decoding
+    // Method 1: Intel API handles hardware selection
+    // Set hardware decoding
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::Hardware,
+            constants::Implementation::HARDWARE,
             None,
         )
         .unwrap();
@@ -43,14 +56,17 @@ pub async fn main() {
         )
         .unwrap();
 
+    // Method 2: Set accelerator handle on the loader
     // Try to get the default vaapi accelerator
-    let accel_handle = AcceleratorHandle::vaapi_from_file(None).unwrap();
-
-    loader.set_accelerator(accel_handle).unwrap();
+    // let accel_handle = onevpl::constants::AcceleratorHandle::vaapi_from_file(None).unwrap();
+    // loader.set_accelerator(accel_handle).unwrap();
 
     let mut session = loader.new_session(0).unwrap();
 
-    // dbg!(session.implementation().unwrap());
+    // Method 3: Set accelerator handle on the session
+    // Try to get the default vaapi accelerator
+    // let accel_handle = onevpl::constants::AcceleratorHandle::vaapi_from_file(None).unwrap();
+    // session.set_accelerator(accel_handle).unwrap();
 
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
     let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::HEVC);
@@ -69,26 +85,33 @@ pub async fn main() {
     let decoder = session.decoder(&mut params).unwrap();
 
     loop {
-        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-        let bytes_read = io::copy(
-            &mut io::Read::take(&mut file, free_buffer_len),
-            &mut bitstream,
-        )
-        .unwrap();
-
-        let mut frame = match decoder.decode(Some(&mut bitstream), None).await {
-            Ok(frame) => frame,
+        let frame = match decoder.decode(Some(&mut bitstream), None).await {
+            Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {
-                break;
+                let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+                let bytes_read = io::copy(
+                    &mut io::Read::take(&mut file, free_buffer_len),
+                    &mut bitstream,
+                )
+                .unwrap();
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                None
+            }
+            Err(e) if e == MfxStatus::VideoParamChanged => {
+                let params = decoder.params().unwrap();
+                dbg!(params);
+                None
             }
             Err(e) => panic!("{:?}", e),
         };
 
-        let bytes = io::copy(&mut frame, &mut output).unwrap();
-        assert_ne!(bytes, 0);
-
-        if bytes_read == 0 && bytes == 0 {
-            break;
+        if let Some(mut frame) = frame {
+            let bytes = io::copy(&mut frame, &mut output).unwrap();
+            assert_ne!(bytes, 0);
         }
     }
 

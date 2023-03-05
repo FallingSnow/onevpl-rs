@@ -17,5 +17,8 @@ RUST_LOG=trace cargo run --example decode_file
 
 ## Todo
 - [ ] Example to decode to RGB4
-- [ ] Simple hardware accelerated decoding
+    - [ ] Example to decode to drm
+- [x] Simple hardware accelerated decoding
     - https://spec.oneapi.io/versions/latest/elements/oneVPL/source/programming_guide/VPL_prg_hw.html
+- [ ] 10 bit decoding support
+    - Mostly just need to write the functions to write pl10 to a file

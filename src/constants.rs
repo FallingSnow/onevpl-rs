@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use bitflags::bitflags;
 use enum_repr::EnumRepr;
 use intel_onevpl_sys as ffi;
@@ -103,7 +105,7 @@ bitflags! {
         #[doc = " The mapping would be done immediately without any implicit synchronizations.\n \\attention This flag is optional."]
         const NO_WAIT = ffi::mfxMemoryFlags_MFX_MAP_NOWAIT; // 16
         #[doc = "< The surface is mapped for reading and writing."]
-        const READ_WRITE = ffi::mfxMemoryFlags_MFX_MAP_READ_WRITE;
+        const READ_WRITE = ffi::mfxMemoryFlags_MFX_MAP_READ_WRITE; // 3
     }
 }
 
@@ -138,6 +140,18 @@ impl ApiVersion {
     pub fn new(major: u16, minor: u16) -> Self {
         ApiVersion(((major as u32) << 16) + minor as u32)
     }
+    pub fn major(&self) -> u16 {
+        (self.0 >> 16) as u16 
+    }
+    pub fn minor(&self) -> u16 {
+        self.0 as u16 
+    }
+}
+
+impl From<u32> for ApiVersion {
+    fn from(value: u32) -> Self {
+        ApiVersion(value)
+    }
 }
 
 impl Into<FilterProperty> for ApiVersion {
@@ -146,32 +160,37 @@ impl Into<FilterProperty> for ApiVersion {
     }
 }
 
-#[EnumRepr(type = "u32")]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[doc = " This enum itemizes implementation type."]
-pub enum Implementation {
-    #[doc = "< Pure Software Implementation."]
-    Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
-    #[doc = "< Hardware Accelerated Implementation."]
-    Hardware = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE,
+impl Debug for ApiVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ApiVersion").field(&self.major()).field(&self.minor()).finish()
+    }
+}
+
+// #[EnumRepr(type = "u32")]
+// #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+// #[doc = " This enum itemizes implementation type."]
+// pub enum Implementation {
+//     #[doc = "< Pure Software Implementation."]
+//     Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
+//     #[doc = "< Hardware Accelerated Implementation."]
+//     Hardware = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE,
+// }
+
+bitflags! {
+    #[doc = " This enum itemizes implementation type."]
+    pub struct Implementation: u32 {
+        #[doc = "< Pure Software Implementation."]
+        const SOFTWARE = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE;
+        #[doc = "< Hardware Accelerated Implementation."]
+        const HARDWARE = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE;
+    }
 }
 
 impl Into<FilterProperty> for Implementation {
     fn into(self) -> FilterProperty {
-        FilterProperty::U32(self.repr())
+        FilterProperty::U32(self.bits())
     }
 }
-
-// // #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-// bitflags! {
-//     #[doc = " This enum itemizes implementation type."]
-//     pub struct Implementation: u32 {
-//         #[doc = "< Pure Software Implementation."]
-//         const SOFTWARE = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE;
-//         #[doc = "< Hardware Accelerated Implementation."]
-//         const HARDWARE = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE;
-//     }
-// }
 
 bitflags! {
     #[doc = " The IOPattern enumerator itemizes memory access patterns for API functions. Use bit-ORed values to specify an input access\npattern and an output access pattern."]

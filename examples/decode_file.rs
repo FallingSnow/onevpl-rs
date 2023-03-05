@@ -21,7 +21,7 @@ pub async fn main() {
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::Software,
+            constants::Implementation::SOFTWARE,
             None,
         )
         .unwrap();
@@ -71,7 +71,6 @@ pub async fn main() {
     let decoder = session.decoder(&mut params).unwrap();
 
     loop {
-        // We try to decode a frame every iteration. You could
         let frame = match decoder.decode(Some(&mut bitstream), None).await {
             Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {

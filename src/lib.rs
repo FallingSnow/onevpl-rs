@@ -7,7 +7,9 @@ use std::{
     ops::Deref,
 };
 
-use constants::{BitstreamDataFlags, Codec, FourCC, Implementation, IoPattern, SkipMode};
+use constants::{
+    ApiVersion, BitstreamDataFlags, Codec, FourCC, Implementation, IoPattern, SkipMode,
+};
 use ffi::{
     mfxBitstream, mfxConfig, mfxLoader, mfxSession, mfxStructVersion,
     mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, MfxStatus,
@@ -16,7 +18,7 @@ use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
 use tokio::task;
-use tracing::{debug, trace};
+use tracing::{debug, trace, error};
 
 use crate::constants::MemoryFlag;
 
@@ -180,12 +182,12 @@ impl FrameSurface<'_> {
     }
 
     /// Sets pointers of surface->Info.Data to actual pixel data, providing read-write access. See [`ffi::mfxFrameSurfaceInterface::Map`] for more info.
-    fn map(&mut self) -> Result<(), MfxStatus> {
+    fn map(&mut self, access: MemoryFlag) -> Result<(), MfxStatus> {
         // Get memory mapping function
         let func = self.interface().Map.unwrap();
 
         // Map surface data to get read access to it
-        let status: MfxStatus = unsafe { func(self.inner, MemoryFlag::READ.bits()) }.into();
+        let status: MfxStatus = unsafe { func(self.inner, access.bits()) }.into();
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -239,6 +241,7 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
             Self {
                 inner: frame_surface_ptr,
                 read_offset: 0,
+                // backing_surface: None,
             }
         } else {
             return Err(MfxStatus::NullPtr);
@@ -250,44 +253,166 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
 
 impl io::Read for FrameSurface<'_> {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
+
+        // FIXME: Remove unwrap and replace with actual error
+        self.map(MemoryFlag::READ).unwrap();
+
         let data: ffi::mfxFrameData = self.inner.Data;
         let info: ffi::mfxFrameInfo = self.inner.Info;
 
         let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
         let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
-
-        // dbg!(w, h);
-
-        // FIXME: Remove unwrap and replace with actual error
-        self.map().unwrap();
+        
         let mut bytes_written = 0;
 
-        // FIXME: Remove unwrap and replace with actual error
-        'outer: {
-            match FourCC::from_repr(info.FourCC).unwrap() {
-                FourCC::IyuvOrI420 => {
-                    #[cfg(feature = "vector-write")]
-                    let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
-                    let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
+        // We wrap this in a closure so we can capture the result. No matter
+        // what the result is, we are still able to unmap the surface.
+        let mut write_func = || {
+            'outer: {
+                // FIXME: Remove unwrap and replace with actual error
+                match FourCC::from_repr(info.FourCC).unwrap() {
+                    FourCC::IyuvOrI420 => {
+                        #[cfg(feature = "vector-write")]
+                        let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
+                        let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
 
-                    // Y
-                    let y_start = self.read_offset / w;
-                    let total_y_size = w * h;
-                    // dbg!(pitch, w, y_start, h, self.read_offset);
-                    for i in y_start..h {
-                        let offset = i * pitch;
-                        let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
-                        debug_assert!(!ptr.is_null());
-                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                        // Y
+                        let y_start = self.read_offset / w;
+                        let total_y_size = w * h;
+                        // dbg!(pitch, w, y_start, h, self.read_offset);
+                        for i in y_start..h {
+                            let offset = i * pitch;
+                            let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                            debug_assert!(!ptr.is_null());
+                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
 
-                        // This vector write implementation is not very good because it gets all the slices (entire frame) even though we might end up only writing a couple slices. So it has a lot of overhead.
+                            // This vector write implementation is not very good because it gets all the slices (entire frame) even though we might end up only writing a couple slices. So it has a lot of overhead.
+                            #[cfg(feature = "vector-write")]
+                            {
+                                let io_slice = std::io::IoSlice::new(slice);
+                                io_slices.push(io_slice);
+                            }
+                            #[cfg(not(feature = "vector-write"))]
+                            {
+                                // We don't want to write a portion of a slice, only whole slices
+                                let bytes = if slice.len() <= buf.len() {
+                                    // FIXME: remove unwrap
+                                    buf.write(slice).unwrap()
+                                } else {
+                                    0
+                                };
+                                if bytes == 0 {
+                                    break 'outer;
+                                }
+                                bytes_written += bytes;
+                            }
+                        }
+
+                        let pitch = pitch / 2;
+                        let h = h / 2;
+                        let w = w / 2;
+                        let total_uv_size = w * h;
+
+                        // U
+                        let u_start = (self.read_offset + bytes_written - total_y_size) / w;
+                        for i in u_start..h {
+                            let offset = i * pitch;
+                            let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
+                            debug_assert!(!ptr.is_null());
+                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                            #[cfg(feature = "vector-write")]
+                            {
+                                let io_slice = std::io::IoSlice::new(slice);
+                                io_slices.push(io_slice);
+                            }
+                            #[cfg(not(feature = "vector-write"))]
+                            {
+                                // We don't want to write a portion of a slice, only whole slices
+                                let bytes = if slice.len() <= buf.len() {
+                                    // FIXME: remove unwrap
+                                    buf.write(slice).unwrap()
+                                } else {
+                                    0
+                                };
+                                if bytes == 0 {
+                                    break 'outer;
+                                }
+                                bytes_written += bytes;
+                            }
+                        }
+
+                        // V
+                        let v_start =
+                            (self.read_offset + bytes_written - total_y_size - total_uv_size) / w;
+                        for i in v_start..h {
+                            let offset = i * pitch;
+                            let ptr = unsafe { data.__bindgen_anon_5.V.offset(offset as isize) };
+                            debug_assert!(!ptr.is_null());
+                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                            #[cfg(feature = "vector-write")]
+                            {
+                                let io_slice = std::io::IoSlice::new(slice);
+                                io_slices.push(io_slice);
+                            }
+                            #[cfg(not(feature = "vector-write"))]
+                            {
+                                // We don't want to write a portion of a slice, only whole slices
+                                let bytes = if slice.len() <= buf.len() {
+                                    // FIXME: remove unwrap
+                                    buf.write(slice).unwrap()
+                                } else {
+                                    0
+                                };
+                                if bytes == 0 {
+                                    break 'outer;
+                                }
+                                bytes_written += bytes;
+                            }
+                        }
                         #[cfg(feature = "vector-write")]
                         {
-                            let io_slice = std::io::IoSlice::new(slice);
-                            io_slices.push(io_slice);
+                            bytes_written +=
+                                io::Write::write_vectored(&mut buf, &io_slices).unwrap();
                         }
-                        #[cfg(not(feature = "vector-write"))]
-                        {
+                        // dbg!(io_slices.len(), bytes_written);
+                        // assert_eq!(buffers_written, (h as usize) * 2);
+                    }
+                    FourCC::NV12 => {
+                        let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
+
+                        // Y
+                        let y_start = self.read_offset / w;
+                        let total_y_size = w * h;
+                        // dbg!(pitch, w, y_start, h, self.read_offset);
+                        for i in y_start..h {
+                            let offset = i * pitch;
+                            let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                            debug_assert!(!ptr.is_null());
+                            // dbg!(i, offset, ptr, h, w, y_start);
+                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+
+                            // We don't want to write a portion of a slice, only whole slices
+                            let bytes = if slice.len() <= buf.len() {
+                                // FIXME: remove unwrap
+                                buf.write(slice).unwrap()
+                            } else {
+                                0
+                            };
+                            if bytes == 0 {
+                                break 'outer;
+                            }
+                            bytes_written += bytes;
+                        }
+
+                        let h = h / 2;
+
+                        // U
+                        let u_start = (self.read_offset + bytes_written - total_y_size) / w;
+                        for i in u_start..h {
+                            let offset = i * pitch;
+                            let ptr = unsafe { data.__bindgen_anon_4.UV.offset(offset as isize) };
+                            debug_assert!(!ptr.is_null());
+                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
                             // We don't want to write a portion of a slice, only whole slices
                             let bytes = if slice.len() <= buf.len() {
                                 // FIXME: remove unwrap
@@ -301,154 +426,43 @@ impl io::Read for FrameSurface<'_> {
                             bytes_written += bytes;
                         }
                     }
-
-                    let pitch = pitch / 2;
-                    let h = h / 2;
-                    let w = w / 2;
-                    let total_uv_size = w * h;
-
-                    // U
-                    let u_start = (self.read_offset + bytes_written - total_y_size) / w;
-                    for i in u_start..h {
-                        let offset = i * pitch;
-                        let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
-                        debug_assert!(!ptr.is_null());
-                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                        #[cfg(feature = "vector-write")]
-                        {
-                            let io_slice = std::io::IoSlice::new(slice);
-                            io_slices.push(io_slice);
-                        }
-                        #[cfg(not(feature = "vector-write"))]
-                        {
-                            // We don't want to write a portion of a slice, only whole slices
-                            let bytes = if slice.len() <= buf.len() {
-                                // FIXME: remove unwrap
-                                buf.write(slice).unwrap()
-                            } else {
-                                0
-                            };
-                            if bytes == 0 {
-                                break 'outer;
-                            }
-                            bytes_written += bytes;
-                        }
+                    // case MFX_FOURCC_NV12:
+                    //     // Y
+                    //     pitch = data->Pitch;
+                    //     for (i = 0; i < h; i++) {
+                    //         fwrite(data->Y + i * pitch, 1, w, f);
+                    //     }
+                    //     // UV
+                    //     h /= 2;
+                    //     for (i = 0; i < h; i++) {
+                    //         fwrite(data->UV + i * pitch, 1, w, f);
+                    //     }
+                    //     break;
+                    // case MFX_FOURCC_RGB4:
+                    //     // Y
+                    //     pitch = data->Pitch;
+                    //     for (i = 0; i < h; i++) {
+                    //         fwrite(data->B + i * pitch, 1, pitch, f);
+                    //     }
+                    //     break;
+                    _ => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            format!("Unsupported format {}", info.FourCC),
+                        ));
                     }
-
-                    // V
-                    let v_start =
-                        (self.read_offset + bytes_written - total_y_size - total_uv_size) / w;
-                    for i in v_start..h {
-                        let offset = i * pitch;
-                        let ptr = unsafe { data.__bindgen_anon_5.V.offset(offset as isize) };
-                        debug_assert!(!ptr.is_null());
-                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                        #[cfg(feature = "vector-write")]
-                        {
-                            let io_slice = std::io::IoSlice::new(slice);
-                            io_slices.push(io_slice);
-                        }
-                        #[cfg(not(feature = "vector-write"))]
-                        {
-                            // We don't want to write a portion of a slice, only whole slices
-                            let bytes = if slice.len() <= buf.len() {
-                                // FIXME: remove unwrap
-                                buf.write(slice).unwrap()
-                            } else {
-                                0
-                            };
-                            if bytes == 0 {
-                                break 'outer;
-                            }
-                            bytes_written += bytes;
-                        }
-                    }
-                    #[cfg(feature = "vector-write")]
-                    {
-                        bytes_written += io::Write::write_vectored(&mut buf, &io_slices).unwrap();
-                    }
-                    // dbg!(io_slices.len(), bytes_written);
-                    // assert_eq!(buffers_written, (h as usize) * 2);
-                }
-                FourCC::NV12 => {
-                    let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
-
-                    // Y
-                    let y_start = self.read_offset / w;
-                    let total_y_size = w * h;
-                    // dbg!(pitch, w, y_start, h, self.read_offset);
-                    for i in y_start..h {
-                        let offset = i * pitch;
-                        let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
-                        debug_assert!(!ptr.is_null());
-                        // dbg!(i, offset, ptr, h, w, y_start);
-                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-
-                        // We don't want to write a portion of a slice, only whole slices
-                        let bytes = if slice.len() <= buf.len() {
-                            // FIXME: remove unwrap
-                            buf.write(slice).unwrap()
-                        } else {
-                            0
-                        };
-                        if bytes == 0 {
-                            break 'outer;
-                        }
-                        bytes_written += bytes;
-                    }
-
-                    let h = h / 2;
-
-                    // U
-                    let u_start = (self.read_offset + bytes_written - total_y_size) / w;
-                    for i in u_start..h {
-                        let offset = i * pitch;
-                        let ptr = unsafe { data.__bindgen_anon_4.UV.offset(offset as isize) };
-                        debug_assert!(!ptr.is_null());
-                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                        // We don't want to write a portion of a slice, only whole slices
-                        let bytes = if slice.len() <= buf.len() {
-                            // FIXME: remove unwrap
-                            buf.write(slice).unwrap()
-                        } else {
-                            0
-                        };
-                        if bytes == 0 {
-                            break 'outer;
-                        }
-                        bytes_written += bytes;
-                    }
-                }
-                // case MFX_FOURCC_NV12:
-                //     // Y
-                //     pitch = data->Pitch;
-                //     for (i = 0; i < h; i++) {
-                //         fwrite(data->Y + i * pitch, 1, w, f);
-                //     }
-                //     // UV
-                //     h /= 2;
-                //     for (i = 0; i < h; i++) {
-                //         fwrite(data->UV + i * pitch, 1, w, f);
-                //     }
-                //     break;
-                // case MFX_FOURCC_RGB4:
-                //     // Y
-                //     pitch = data->Pitch;
-                //     for (i = 0; i < h; i++) {
-                //         fwrite(data->B + i * pitch, 1, pitch, f);
-                //     }
-                //     break;
-                _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Unsupported,
-                        format!("Unsupported format {}", info.FourCC),
-                    ));
-                }
+                };
             };
+
+            Ok(())
         };
+
+        let result = write_func();
 
         // FIXME: Remove unwrap and replace with actual error
         self.unmap().unwrap();
+
+        result?;
 
         self.read_offset += bytes_written;
         Ok(bytes_written)
@@ -503,23 +517,22 @@ impl<'a> Decoder<'a> {
         };
 
         let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
+        let surface_work = std::ptr::null_mut();
+        let session = self.session.inner;
 
         let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
         // dbg!(sync_point, output_surface);
 
         let status: MfxStatus = unsafe {
             lib.MFXVideoDECODE_DecodeFrameAsync(
-                self.session.inner,
-                // (isDraining) ? NULL : &bitstream,
+                session,
                 bitstream,
-                std::ptr::null_mut(),
+                surface_work,
                 &mut output_surface,
                 &mut sync_point,
             )
         }
         .into();
-
-        // dbg!(sync_point, output_surface);
 
         trace!("Decode frame start = {:?}", status);
 
@@ -536,13 +549,35 @@ impl<'a> Decoder<'a> {
         .await
         .unwrap()?;
 
-    dbg!(&output_surface);
+        // dbg!(unsafe {&output_surface.inner.Info.__bindgen_anon_1.__bindgen_anon_1});
 
         trace!("Decoded: {:?}", decode_start.elapsed());
 
         trace!("Decoded frame = {:?}", status);
 
         Ok(output_surface)
+    }
+
+    pub fn surface(&mut self) -> Result<FrameSurface, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut surface = std::ptr::null_mut();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXMemory_GetSurfaceForDecode(self.session.inner, &mut surface) }.into();
+
+        // dbg!(sync_point, output_surface);
+
+        trace!("Get decode surface = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let surface = FrameSurface::try_from(surface)?;
+
+        Ok(surface)
+
     }
 
     /// The application may use this API function to increase decoding performance by sacrificing output quality.
@@ -591,7 +626,7 @@ impl<'a> Decoder<'a> {
     /// Retrieves current working parameters.
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-getvideoparam for more info.
-    pub fn get_params(&mut self) -> Result<MFXVideoParams, MfxStatus> {
+    pub fn params(&self) -> Result<MFXVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut params = MFXVideoParams::new();
@@ -649,6 +684,15 @@ impl AcceleratorHandle {
 
         trace!("Initialized va display = {}", va_status);
 
+        // FIXME: We really need to replace MfxStatus returned everywhere with a custom error enum
+        if va_status != libva_sys::VA_STATUS_SUCCESS as i32 {
+            error!(
+                "Failed to intialize va display = vaInitialize = {}",
+                va_status
+            );
+            return Err(MfxStatus::NotInitialized);
+        }
+
         Ok(Self::VAAPI((file, display)))
     }
     pub fn handle(&self) -> &*mut c_void {
@@ -675,10 +719,10 @@ impl Drop for AcceleratorHandle {
 
 pub struct Session {
     inner: mfxSession,
+    accelerator: Option<AcceleratorHandle>,
 }
 
 impl Session {
-    #[tracing::instrument]
     pub(crate) fn new(loader: &mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
         let mut session: mfxSession = unsafe { mem::zeroed() };
@@ -689,9 +733,18 @@ impl Session {
             return Err(status);
         }
 
-        debug!("Created a new session");
 
-        Ok(Self { inner: session })
+        let session = Self {
+            inner: session,
+            accelerator: None,
+        };
+
+        debug!("Created a new session");
+        debug!("API version = {:?}", session.version().unwrap());
+        debug!("Implementation = {:?}", session.implementation().unwrap());
+
+        // FIXME: accelerator should be passed through from the loader if it was already set
+        Ok(session)
     }
 
     pub fn decoder(&mut self, params: &mut MFXVideoParams) -> Result<Decoder<'_>, MfxStatus> {
@@ -743,9 +796,41 @@ impl Session {
             return Err(status);
         }
 
-        let implementation = Implementation::from_repr(implementation as u32).unwrap();
+        let implementation = Implementation::from_bits_truncate(implementation as u32);
 
         Ok(implementation)
+    }
+
+    pub fn version(&self) -> Result<ApiVersion, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut version: ffi::mfxVersion = unsafe { mem::zeroed() };
+
+        let status = unsafe { lib.MFXQueryVersion(self.inner, &mut version) }.into();
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let version = ApiVersion::from(unsafe { version.Version });
+
+        Ok(version)
+    }
+
+    /// You should probably be setting the accelerator on the loader then creating a session.
+    pub fn set_accelerator(&mut self, handle: AcceleratorHandle) -> Result<(), MfxStatus> {
+        let lib = get_library().unwrap();
+        let status =
+            unsafe { lib.MFXVideoCORE_SetHandle(self.inner, handle.mfx_type(), *handle.handle()) }
+                .into();
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        self.accelerator = Some(handle);
+
+        Ok(())
     }
 }
 
@@ -893,7 +978,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
+            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -934,7 +1019,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
+            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -986,7 +1071,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
+            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -1054,7 +1139,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
+            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
