@@ -20,10 +20,8 @@ use tracing::{debug, trace};
 
 use crate::constants::MemoryFlag;
 
-// use crate::callback_future::CbFuture;
-
-// mod callback_future;
 pub mod constants;
+pub mod utils;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -59,14 +57,23 @@ impl Loader {
 
     /// Usually you want to open `/dev/dri/renderD128` and pass that in a [`AcceleratorHandle::VAAPI`].
     pub fn set_accelerator(&mut self, handle: AcceleratorHandle) -> Result<(), MfxStatus> {
-        let config = self.new_config().unwrap();
-        config.set_filter_property("mfxHandleType", handle.mfx_type().into(), None)?;
-        let config = self.new_config().unwrap();
-        config.set_filter_property("mfxHDL", (*handle.handle()).into(), None)?;
+        self.set_filter_property("mfxHandleType", handle.mfx_type(), None)?;
+        self.set_filter_property("mfxHDL", *handle.handle(), None)?;
 
         self.accelerator = Some(handle);
 
         Ok(())
+    }
+
+    /// This is a shortcut for making a [`Config`] manually via [`Loader::new_config`].
+    pub fn set_filter_property(
+        &mut self,
+        name: &str,
+        value: impl Into<utils::FilterProperty>,
+        version: Option<mfxStructVersion>,
+    ) -> Result<(), MfxStatus> {
+        let config = self.new_config()?;
+        config.set_filter_property(name, value, version)
     }
 }
 
@@ -85,46 +92,6 @@ impl Drop for Loader {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum FilterProperty {
-    I32(i32),
-    U32(u32),
-    Ptr(*mut std::ffi::c_void),
-}
-impl FilterProperty {
-    pub fn filter_type(&self) -> u32 {
-        match self {
-            FilterProperty::I32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_I32,
-            FilterProperty::U32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_U32,
-            FilterProperty::Ptr(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_PTR,
-        }
-    }
-    pub(crate) fn data(&self) -> ffi::mfxVariant_data {
-        use ffi::mfxVariant_data;
-        match *self {
-            FilterProperty::I32(value) => mfxVariant_data { I32: value },
-            FilterProperty::U32(value) => mfxVariant_data { U32: value },
-            FilterProperty::Ptr(value) => mfxVariant_data { Ptr: value },
-        }
-    }
-}
-
-impl From<u32> for FilterProperty {
-    fn from(value: u32) -> Self {
-        Self::U32(value)
-    }
-}
-impl From<i32> for FilterProperty {
-    fn from(value: i32) -> Self {
-        Self::I32(value)
-    }
-}
-impl From<*mut std::ffi::c_void> for FilterProperty {
-    fn from(value: *mut std::ffi::c_void) -> Self {
-        Self::Ptr(value)
-    }
-}
-
 #[derive(Debug)]
 pub struct Config {
     inner: mfxConfig,
@@ -140,17 +107,18 @@ impl Config {
         return Ok(Self { inner: config });
     }
 
-    #[tracing::instrument]
     pub fn set_filter_property(
         self,
         name: &str,
-        value: FilterProperty,
+        value: impl Into<utils::FilterProperty>,
         version: Option<mfxStructVersion>,
     ) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
         let version = version.unwrap_or(mfxStructVersion {
             __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
         });
+
+        let value = value.into();
 
         let mut name = name.to_string();
         // CStrings need to nul terminated
@@ -170,7 +138,7 @@ impl Config {
 
         debug!(
             "Setting filter property [{} = {:?}] : {:?}",
-            name, data, status
+            name, value, status
         );
 
         if status != MfxStatus::NoneOrDone {
@@ -179,45 +147,9 @@ impl Config {
 
         Ok(())
     }
-
-    // #[tracing::instrument]
-    // pub fn set_filter_property_ptr(
-    //     self,
-    //     name: &str,
-    //     value: *mut c_void,
-    //     version: Option<mfxStructVersion>,
-    // ) -> Result<(), MfxStatus> {
-    //     let lib = get_library().unwrap();
-    //     let version = version.unwrap_or(mfxStructVersion {
-    //         __bindgen_anon_1: mfxStructVersion__bindgen_ty_1 { Minor: 0, Major: 0 },
-    //     });
-
-    //     let mut name = name.to_string();
-    //     // CStrings need to nul terminated
-    //     name.push('\0');
-
-    //     let variant = mfxVariant {
-    //         Version: version,
-    //         Type: mfxVariantType_MFX_VARIANT_TYPE_PTR,
-    //         Data: ffi::mfxVariant_data { Ptr: value },
-    //     };
-
-    //     let status =
-    //         unsafe { lib.MFXSetConfigFilterProperty(self.inner, name.as_ptr(), variant) }.into();
-
-    //     debug!(
-    //         "Setting filter property [{} = {:?}] : {:?}",
-    //         name, value, status
-    //     );
-
-    //     if status != MfxStatus::NoneOrDone {
-    //         return Err(status);
-    //     }
-
-    //     Ok(())
-    // }
 }
 
+#[derive(Debug)]
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
@@ -597,15 +529,14 @@ impl<'a> Decoder<'a> {
 
         let mut output_surface = FrameSurface::try_from(output_surface)?;
 
-        output_surface.synchronize(timeout)?;
-
-
         let output_surface = task::spawn_blocking(move || {
             output_surface.synchronize(timeout)?;
             Ok(output_surface) as Result<FrameSurface, MfxStatus>
         })
         .await
         .unwrap()?;
+
+    dbg!(&output_surface);
 
         trace!("Decoded: {:?}", decode_start.elapsed());
 
@@ -706,6 +637,9 @@ impl AcceleratorHandle {
         });
 
         let display = unsafe { libva_sys::va_display_drm::vaGetDisplayDRM(file.as_raw_fd()) };
+
+        // FIXME: Can't get it to display the pointer
+        // trace!("Got va DRM display = {:p}", display);
 
         if display.is_null() {
             return Err(MfxStatus::InvalidHandle);
@@ -942,19 +876,9 @@ impl io::Write for Bitstream<'_> {
     }
 }
 
-pub mod utils {
-    pub fn align16(x: u16) -> u16 {
-        ((x + 15) >> 4) << 4
-    }
-
-    pub fn align32(x: u32) -> u32 {
-        (x + 31) & !31
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::constants::{Codec, Implementation};
+    use crate::constants::{ApiVersion, Codec, Implementation};
 
     use super::*;
     use tracing_test::traced_test;
@@ -969,11 +893,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property(
-                "mfxImplDescription.Impl",
-                Implementation::Software.repr().into(),
-                None,
-            )
+            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -981,7 +901,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr().into(),
+                Codec::HEVC,
                 None,
             )
             .unwrap();
@@ -991,7 +911,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                ((2u32 << 16) + 2).into(),
+                ApiVersion::new(2, 2),
                 None,
             )
             .unwrap();
@@ -1014,11 +934,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property(
-                "mfxImplDescription.Impl",
-                Implementation::Software.repr().into(),
-                None,
-            )
+            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -1026,7 +942,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr().into(),
+                Codec::HEVC,
                 None,
             )
             .unwrap();
@@ -1036,7 +952,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                ((2u32 << 16) + 2).into(),
+                ApiVersion::new(2, 2),
                 None,
             )
             .unwrap();
@@ -1070,11 +986,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property(
-                "mfxImplDescription.Impl",
-                Implementation::Software.repr().into(),
-                None,
-            )
+            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -1082,7 +994,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr().into(),
+                Codec::HEVC,
                 None,
             )
             .unwrap();
@@ -1092,7 +1004,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                ((2u32 << 16) + 2).into(),
+                ApiVersion::new(2, 2),
                 None,
             )
             .unwrap();
@@ -1142,11 +1054,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property(
-                "mfxImplDescription.Impl",
-                Implementation::Software.repr().into(),
-                None,
-            )
+            .set_filter_property("mfxImplDescription.Impl", Implementation::Software, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -1154,7 +1062,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC.repr().into(),
+                Codec::HEVC,
                 None,
             )
             .unwrap();
@@ -1164,7 +1072,7 @@ mod tests {
         config
             .set_filter_property(
                 "mfxImplDescription.ApiVersion.Version",
-                ((2u32 << 16) + 2).into(),
+                ApiVersion::new(2, 2),
                 None,
             )
             .unwrap();

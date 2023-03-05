@@ -2,6 +2,8 @@ use bitflags::bitflags;
 use enum_repr::EnumRepr;
 use intel_onevpl_sys as ffi;
 
+use crate::utils::FilterProperty;
+
 #[EnumRepr(type = "u32")]
 #[derive(Debug, Clone, Copy)]
 #[doc = " The ColorFourCC enumerator itemizes color formats."]
@@ -124,6 +126,26 @@ pub enum Codec {
     AV1 = ffi::MFX_CODEC_AV1,
 }
 
+impl Into<FilterProperty> for Codec {
+    fn into(self) -> FilterProperty {
+        FilterProperty::U32(self.repr())
+    }
+}
+
+pub struct ApiVersion(u32);
+
+impl ApiVersion {
+    pub fn new(major: u16, minor: u16) -> Self {
+        ApiVersion(((major as u32) << 16) + minor as u32)
+    }
+}
+
+impl Into<FilterProperty> for ApiVersion {
+    fn into(self) -> FilterProperty {
+        FilterProperty::U32(self.0)
+    }
+}
+
 #[EnumRepr(type = "u32")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[doc = " This enum itemizes implementation type."]
@@ -132,6 +154,12 @@ pub enum Implementation {
     Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
     #[doc = "< Hardware Accelerated Implementation."]
     Hardware = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE,
+}
+
+impl Into<FilterProperty> for Implementation {
+    fn into(self) -> FilterProperty {
+        FilterProperty::U32(self.repr())
+    }
 }
 
 // // #[derive(Clone, Copy, PartialEq, Eq, Debug)]

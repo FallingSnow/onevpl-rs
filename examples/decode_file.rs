@@ -17,28 +17,29 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
 
-    let config = loader.new_config().unwrap();
     // Set software decoding
-    config
-        .set_filter_property("mfxImplDescription.Impl", constants::Implementation::Software.repr().into(), None)
-        .unwrap();
-
-    let config = loader.new_config().unwrap();
-    // Set decode HEVC
-    config
+    loader
         .set_filter_property(
-            "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-            constants::Codec::HEVC.repr().into(),
+            "mfxImplDescription.Impl",
+            constants::Implementation::Software,
             None,
         )
         .unwrap();
 
-    let config = loader.new_config().unwrap();
+    // Set decode HEVC
+    loader
+        .set_filter_property(
+            "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
+            constants::Codec::HEVC,
+            None,
+        )
+        .unwrap();
+
     // Set required API version to 2.2
-    config
+    loader
         .set_filter_property(
             "mfxImplDescription.ApiVersion.Version",
-            ((2u32 << 16) + 2).into(),
+            constants::ApiVersion::new(2, 2),
             None,
         )
         .unwrap();
@@ -58,6 +59,8 @@ pub async fn main() {
         &mut bitstream,
     )
     .unwrap();
+
+    // If we read 0 bytes from the input file, something is obviously wrong
     assert_ne!(bytes_read, 0);
 
     // Get information about the bitstream we are about to decode
@@ -68,28 +71,36 @@ pub async fn main() {
     let decoder = session.decoder(&mut params).unwrap();
 
     loop {
-        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-        let bytes_read = io::copy(
-            &mut io::Read::take(&mut file, free_buffer_len),
-            &mut bitstream,
-        )
-        .unwrap();
-
         // We try to decode a frame every iteration. You could
-        let mut frame = match decoder.decode(Some(&mut bitstream), None).await {
-            Ok(frame) => frame,
+        let frame = match decoder.decode(Some(&mut bitstream), None).await {
+            Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {
-                break;
+                let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
+                let bytes_read = io::copy(
+                    &mut io::Read::take(&mut file, free_buffer_len),
+                    &mut bitstream,
+                )
+                .unwrap();
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                None
             }
             Err(e) => panic!("{:?}", e),
         };
 
-        let bytes = io::copy(&mut frame, &mut output).unwrap();
-        assert_ne!(bytes, 0);
-
-        if bytes_read == 0 && bytes == 0 {
-            break;
+        if let Some(mut frame) = frame {
+            let bytes = io::copy(&mut frame, &mut output).unwrap();
+            assert_ne!(bytes, 0);
         }
+
+        // // I don't think we'll hit this line, but if we don't read anything and
+        // // don't write anything we want to break out of the loop.
+        // if bytes_read == 0 && bytes == 0 {
+        //     break;
+        // }
     }
 
     // Now the flush the decoder pass None to decode. "The application must set

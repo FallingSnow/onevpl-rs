@@ -16,33 +16,34 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
 
-    let config = loader.new_config().unwrap();
     // Set software decoding
-    config
-        .set_filter_property("mfxImplDescription.Impl", constants::Implementation::Hardware.repr().into(), None)
+    loader
+        .set_filter_property(
+            "mfxImplDescription.Impl",
+            constants::Implementation::Hardware,
+            None,
+        )
         .unwrap();
 
-    let config = loader.new_config().unwrap();
     // Set decode HEVC
-    config
+    loader
         .set_filter_property(
             "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-            constants::Codec::HEVC.repr().into(),
+            constants::Codec::HEVC,
             None,
         )
         .unwrap();
 
-    let config = loader.new_config().unwrap();
     // Set required API version to 2.2
-    config
+    loader
         .set_filter_property(
             "mfxImplDescription.ApiVersion.Version",
-            ((2u32 << 16) + 2).into(),
+            constants::ApiVersion::new(2, 2),
             None,
         )
         .unwrap();
 
-    // Try to get the default accelerator
+    // Try to get the default vaapi accelerator
     let accel_handle = AcceleratorHandle::vaapi_from_file(None).unwrap();
 
     loader.set_accelerator(accel_handle).unwrap();
