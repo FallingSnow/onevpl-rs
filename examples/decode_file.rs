@@ -2,7 +2,7 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{constants, Bitstream, Loader};
+use onevpl::{constants, bitstream::Bitstream, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -44,7 +44,7 @@ pub async fn main() {
         )
         .unwrap();
 
-    let mut session = loader.new_session(0).unwrap();
+    let session = loader.new_session(0).unwrap();
 
     // Create a backing buffer that will contain the bitstream we are trying to decode
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];

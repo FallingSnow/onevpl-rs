@@ -22,3 +22,5 @@ RUST_LOG=trace cargo run --example decode_file
     - https://spec.oneapi.io/versions/latest/elements/oneVPL/source/programming_guide/VPL_prg_hw.html
 - [ ] 10 bit decoding support
     - Mostly just need to write the functions to write pl10 to a file
+- [ ] Simple VPP processing
+    - [ ] Pipelined VPP processing

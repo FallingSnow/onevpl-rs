@@ -1,5 +1,9 @@
 ///! This example decodes an hevc encoded file (tests/frozen.hevc) and produces
-///! a raw YUV 4:2:0 8 bit file at `/tmp/output.yuv`.
+///! a raw NV12 4:2:0 8 bit frame. This frame is then converted to YUV12 4:2:0
+///! 8 bit using the VPP and stored in a file at `/tmp/output.yuv`.
+///!
+///! The hardware decoder or VPP seems to not crop. So the output is actually
+///! 320x192 rather than the input 320x180.
 ///!
 ///! There are 3 (modern) ways to intialize hardware acceleration.
 ///! 1. You define the implementation as HARDWARE and the intel API does
@@ -14,7 +18,7 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, constants, Bitstream, Loader};
+use onevpl::{self, bitstream::Bitstream, constants, vpp::VideoParams, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -61,7 +65,7 @@ pub async fn main() {
     // let accel_handle = onevpl::constants::AcceleratorHandle::vaapi_from_file(None).unwrap();
     // loader.set_accelerator(accel_handle).unwrap();
 
-    let mut session = loader.new_session(0).unwrap();
+    let session = loader.new_session(0).unwrap();
 
     // Method 3: Set accelerator handle on the session
     // Try to get the default vaapi accelerator
@@ -78,11 +82,19 @@ pub async fn main() {
     .unwrap();
     assert_ne!(bytes_read, 0);
 
-    let mut params = session
-        .decode_header(&mut bitstream, constants::IoPattern::OUT_SYSTEM_MEMORY)
+    let mut mfx_params = session
+        .decode_header(&mut bitstream, constants::IoPattern::OUT_VIDEO_MEMORY)
         .unwrap();
 
-    let decoder = session.decoder(&mut params).unwrap();
+    // Intel hardware will decode into a hardware color format like nv12 for 8 bit
+    // content. We will use the hardware video processor to convert this to yuv420
+    // format.
+    let mut vpp_params = VideoParams::from(&mfx_params);
+    vpp_params.set_io_pattern(constants::IoPattern::VIDEO_MEMORY);
+    vpp_params.set_fourcc(constants::FourCC::YV12);
+
+    let decoder = session.decoder(&mut mfx_params).unwrap();
+    let vpp = session.video_processor(&mut vpp_params).unwrap();
 
     loop {
         let frame = match decoder.decode(Some(&mut bitstream), None).await {
@@ -103,14 +115,15 @@ pub async fn main() {
             }
             Err(e) if e == MfxStatus::VideoParamChanged => {
                 let params = decoder.params().unwrap();
-                dbg!(params);
+                println!("Video decoding parameters changed. {:?}", params.size());
                 None
             }
             Err(e) => panic!("{:?}", e),
         };
 
         if let Some(mut frame) = frame {
-            let bytes = io::copy(&mut frame, &mut output).unwrap();
+            let mut yuv_frame = vpp.process(Some(&mut frame), None).await.unwrap();
+            let bytes = io::copy(&mut yuv_frame, &mut output).unwrap();
             assert_ne!(bytes, 0);
         }
     }
@@ -125,6 +138,7 @@ pub async fn main() {
             }
             Err(e) => panic!("{:?}", e),
         };
-        io::copy(&mut frame, &mut output).unwrap();
+        let mut yuv_frame = vpp.process(Some(&mut frame), None).await.unwrap();
+        io::copy(&mut yuv_frame, &mut output).unwrap();
     }
 }

@@ -1,29 +1,32 @@
 use std::ffi::c_void;
 use std::fs::File;
-use std::time::Instant;
 use std::{
     io::{self, Write},
     mem,
     ops::Deref,
 };
 
-use constants::{
-    ApiVersion, BitstreamDataFlags, Codec, FourCC, Implementation, IoPattern, SkipMode,
-};
+use bitstream::Bitstream;
+use constants::{ApiVersion, Codec, FourCC, Implementation, IoPattern};
+use decode::Decoder;
 use ffi::{
-    mfxBitstream, mfxConfig, mfxLoader, mfxSession, mfxStructVersion,
-    mfxStructVersion__bindgen_ty_1, mfxU32, mfxVariant, MfxStatus,
+    mfxConfig, mfxLoader, mfxSession, mfxStructVersion, mfxStructVersion__bindgen_ty_1, mfxU32,
+    mfxVariant, MfxStatus,
 };
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
-use tokio::task;
-use tracing::{debug, trace, error};
+use tracing::{debug, error, trace};
+use vpp::VideoProcessor;
 
-use crate::constants::MemoryFlag;
+use crate::constants::{ChromaFormat, MemoryFlag};
 
+pub mod bitstream;
 pub mod constants;
+pub mod decode;
 pub mod utils;
+pub mod vpp;
+pub mod encode;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -253,7 +256,6 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
 
 impl io::Read for FrameSurface<'_> {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
-
         // FIXME: Remove unwrap and replace with actual error
         self.map(MemoryFlag::READ).unwrap();
 
@@ -262,7 +264,7 @@ impl io::Read for FrameSurface<'_> {
 
         let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
         let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
-        
+
         let mut bytes_written = 0;
 
         // We wrap this in a closure so we can capture the result. No matter
@@ -271,7 +273,7 @@ impl io::Read for FrameSurface<'_> {
             'outer: {
                 // FIXME: Remove unwrap and replace with actual error
                 match FourCC::from_repr(info.FourCC).unwrap() {
-                    FourCC::IyuvOrI420 => {
+                    FourCC::IyuvOrI420 | FourCC::YV12 => {
                         #[cfg(feature = "vector-write")]
                         let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
                         let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
@@ -448,7 +450,7 @@ impl io::Read for FrameSurface<'_> {
                     _ => {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::Unsupported,
-                            format!("Unsupported format {}", info.FourCC),
+                            format!("Unsupported format {:?}", FourCC::from_repr(info.FourCC)),
                         ));
                     }
                 };
@@ -466,189 +468,6 @@ impl io::Read for FrameSurface<'_> {
 
         self.read_offset += bytes_written;
         Ok(bytes_written)
-    }
-}
-
-pub struct Decoder<'a> {
-    session: &'a mut Session,
-}
-
-impl<'a> Decoder<'a> {
-    pub(crate) fn new(
-        session: &'a mut Session,
-        params: &mut MFXVideoParams,
-    ) -> Result<Self, MfxStatus> {
-        let lib = get_library().unwrap();
-
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Init(session.inner, &mut params.inner) }.into();
-
-        trace!("Decode init = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        let decoder = Self { session };
-
-        Ok(decoder)
-    }
-
-    /// Decodes the input bitstream to a single output frame. This async
-    /// function automatically calls synchronize to wait for the frame to be
-    /// decoded.
-    ///
-    /// See
-    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-decodeframeasync
-    /// for more info.
-    pub async fn decode(
-        &self,
-        bitstream: Option<&mut Bitstream<'_>>,
-        timeout: Option<u32>,
-    ) -> Result<FrameSurface, MfxStatus> {
-        let decode_start = Instant::now();
-        let lib = get_library().unwrap();
-
-        // If bitstream is null than we are draining
-        let bitstream = if let Some(bitstream) = bitstream {
-            &mut bitstream.inner
-        } else {
-            std::ptr::null_mut()
-        };
-
-        let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
-        let surface_work = std::ptr::null_mut();
-        let session = self.session.inner;
-
-        let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
-        // dbg!(sync_point, output_surface);
-
-        let status: MfxStatus = unsafe {
-            lib.MFXVideoDECODE_DecodeFrameAsync(
-                session,
-                bitstream,
-                surface_work,
-                &mut output_surface,
-                &mut sync_point,
-            )
-        }
-        .into();
-
-        trace!("Decode frame start = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        let mut output_surface = FrameSurface::try_from(output_surface)?;
-
-        let output_surface = task::spawn_blocking(move || {
-            output_surface.synchronize(timeout)?;
-            Ok(output_surface) as Result<FrameSurface, MfxStatus>
-        })
-        .await
-        .unwrap()?;
-
-        // dbg!(unsafe {&output_surface.inner.Info.__bindgen_anon_1.__bindgen_anon_1});
-
-        trace!("Decoded: {:?}", decode_start.elapsed());
-
-        trace!("Decoded frame = {:?}", status);
-
-        Ok(output_surface)
-    }
-
-    pub fn surface(&mut self) -> Result<FrameSurface, MfxStatus> {
-        let lib = get_library().unwrap();
-
-        let mut surface = std::ptr::null_mut();
-
-        let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForDecode(self.session.inner, &mut surface) }.into();
-
-        // dbg!(sync_point, output_surface);
-
-        trace!("Get decode surface = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        let surface = FrameSurface::try_from(surface)?;
-
-        Ok(surface)
-
-    }
-
-    /// The application may use this API function to increase decoding performance by sacrificing output quality.
-    ///
-    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-setskipmode for more info.
-    pub fn set_skip(&mut self, mode: SkipMode) -> Result<(), MfxStatus> {
-        let lib = get_library().unwrap();
-
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_SetSkipMode(self.session.inner, mode.repr()) }.into();
-
-        // dbg!(sync_point, output_surface);
-
-        trace!("Decode frame start = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        Ok(())
-    }
-
-    /// Stops the current decoding operation and restores internal structures or
-    /// parameters for a new decoding operation.
-    ///
-    /// Reset serves two purposes:
-    /// * It recovers the decoder from errors.
-    /// * It restarts decoding from a new position
-    ///
-    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-reset for more info.
-    pub fn reset(&mut self, params: &mut MFXVideoParams) -> Result<(), MfxStatus> {
-        let lib = get_library().unwrap();
-
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Reset(self.session.inner, &mut params.inner) }.into();
-
-        trace!("Decode reset = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        Ok(())
-    }
-
-    /// Retrieves current working parameters.
-    ///
-    /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-getvideoparam for more info.
-    pub fn params(&self) -> Result<MFXVideoParams, MfxStatus> {
-        let lib = get_library().unwrap();
-
-        let mut params = MFXVideoParams::new();
-
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_GetVideoParam(self.session.inner, &mut params.inner) }
-                .into();
-
-        trace!("Decode get params = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
-
-        Ok(params)
-    }
-}
-
-impl<'a> Drop for Decoder<'a> {
-    fn drop(&mut self) {
-        let lib = get_library().unwrap();
-        unsafe { lib.MFXVideoDECODE_Close(self.session.inner) };
     }
 }
 
@@ -733,7 +552,6 @@ impl Session {
             return Err(status);
         }
 
-
         let session = Self {
             inner: session,
             accelerator: None,
@@ -747,8 +565,15 @@ impl Session {
         Ok(session)
     }
 
-    pub fn decoder(&mut self, params: &mut MFXVideoParams) -> Result<Decoder<'_>, MfxStatus> {
+    pub fn decoder(&self, params: &mut MFXVideoParams) -> Result<Decoder<'_>, MfxStatus> {
         Decoder::new(self, params)
+    }
+
+    pub fn video_processor(
+        &self,
+        params: &mut crate::vpp::VideoParams,
+    ) -> Result<VideoProcessor<'_>, MfxStatus> {
+        VideoProcessor::new(self, params)
     }
 
     /// You probably want to set the io_pattern to `IoPattern::OUT_SYSTEM_MEMORY`
@@ -768,17 +593,27 @@ impl Session {
         }
         .into();
 
-        let format =
-            FourCC::from_repr(unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo.FourCC })
-                .unwrap();
-
         trace!("Decode header = {:?}", status);
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
 
-        trace!("Decode output format = {:?}", format);
+        let frame_info = unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo };
+        let format = FourCC::from_repr(frame_info.FourCC).unwrap();
+        let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+        let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
+        let framerate_n = frame_info.FrameRateExtN;
+        let framerate_d = frame_info.FrameRateExtD;
+        let colorspace = ChromaFormat::from_repr(frame_info.ChromaFormat as u32).unwrap();
+        trace!(
+            "Header params = {:?} {:?} {}x{} @ {}fps",
+            format,
+            colorspace,
+            width,
+            height,
+            framerate_n as f32 / framerate_d as f32
+        );
 
         Ok(params)
     }
@@ -868,9 +703,11 @@ impl MFXVideoParams {
             inner: unsafe { mem::zeroed() },
         }
     }
+
     pub fn codec(&self) -> Codec {
         Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.mfx.CodecId }).unwrap()
     }
+
     pub fn set_codec(&mut self, codec: Codec) {
         self.inner.__bindgen_anon_1.mfx.CodecId = codec as u32;
     }
@@ -878,6 +715,7 @@ impl MFXVideoParams {
     pub fn set_io_pattern(&mut self, pattern: IoPattern) {
         self.inner.IOPattern = pattern.bits();
     }
+
     pub fn size(&self) -> &ffi::mfxFrameInfo__bindgen_ty_1__bindgen_ty_1 {
         unsafe {
             &self
@@ -891,84 +729,12 @@ impl MFXVideoParams {
     }
 }
 
-#[derive(Debug)]
-pub struct Bitstream<'a> {
-    buffer: &'a mut [u8],
-    pub(crate) inner: mfxBitstream,
-}
-
-impl<'a> Bitstream<'a> {
-    /// Creates a data source/destination for encoded/decoded/processed data
-    #[tracing::instrument]
-    pub fn with_codec(buffer: &'a mut [u8], codec: Codec) -> Self {
-        let mut bitstream: mfxBitstream = unsafe { mem::zeroed() };
-        bitstream.Data = buffer.as_mut_ptr();
-        bitstream.MaxLength = buffer.len() as u32;
-        bitstream.__bindgen_anon_1.__bindgen_anon_1.CodecId = codec as u32;
-        Self {
-            buffer,
-            inner: bitstream,
-        }
-    }
-
-    pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.CodecId }).unwrap()
-    }
-
-    /// The size of the backing buffer
-    pub fn len(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// The amount of data currently in the bitstream
-    pub fn size(&self) -> u32 {
-        self.inner.DataLength
-    }
-
-    pub fn set_flags(&mut self, flags: BitstreamDataFlags) {
-        self.inner.DataFlag = flags.bits();
-    }
-}
-
-impl io::Write for Bitstream<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let data_offset = self.inner.DataOffset as usize;
-        let data_len = self.inner.DataLength as usize;
-
-        let slice = &mut self.buffer;
-
-        if data_len >= slice.len() {
-            return Ok(0);
-        }
-
-        if data_offset > 0 {
-            // Move all data after DataOffset to the beginning of Data
-            let data_end = data_offset + data_len;
-            slice.copy_within(data_offset..data_end, 0);
-            self.inner.DataOffset = 0;
-        }
-
-        let free_buffer_len = slice.len() - data_len;
-        let copy_len = usize::min(free_buffer_len, buf.len());
-        slice[data_len..data_len + copy_len].copy_from_slice(&buf[..copy_len]);
-        self.inner.DataLength += copy_len as u32;
-
-        Ok(copy_len)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::constants::{ApiVersion, Codec, Implementation};
 
     use super::*;
     use tracing_test::traced_test;
-
-    const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
     #[test]
     #[traced_test]
@@ -1006,177 +772,5 @@ mod tests {
         // TODO
         // accelHandle = InitAcceleratorHandle(session);
         // let accel_handle = null_mut();
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn decode_hevc_file_frame() {
-        // Open file to read from
-        let file = std::fs::File::open("tests/frozen.hevc").unwrap();
-
-        let mut loader = Loader::new().unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set software decoding
-        config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set decode HEVC
-        config
-            .set_filter_property(
-                "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC,
-                None,
-            )
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set required API version to 2.2
-        config
-            .set_filter_property(
-                "mfxImplDescription.ApiVersion.Version",
-                ApiVersion::new(2, 2),
-                None,
-            )
-            .unwrap();
-
-        let mut session = loader.new_session(0).unwrap();
-
-        let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
-        let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
-        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-        let bytes_read =
-            io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
-        assert_ne!(bytes_read, 0);
-
-        let mut params = session
-            .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
-            .unwrap();
-
-        let decoder = session.decoder(&mut params).unwrap();
-
-        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn decode_hevc_file_video() {
-        // Open file to read from
-        let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
-
-        let mut loader = Loader::new().unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set software decoding
-        config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set decode HEVC
-        config
-            .set_filter_property(
-                "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC,
-                None,
-            )
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set required API version to 2.2
-        config
-            .set_filter_property(
-                "mfxImplDescription.ApiVersion.Version",
-                ApiVersion::new(2, 2),
-                None,
-            )
-            .unwrap();
-
-        let mut session = loader.new_session(0).unwrap();
-
-        let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
-        let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
-        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-        let bytes_read = io::copy(
-            &mut io::Read::take(&mut file, free_buffer_len),
-            &mut bitstream,
-        )
-        .unwrap();
-        assert_ne!(bytes_read, 0);
-
-        let mut params = session
-            .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
-            .unwrap();
-
-        let decoder = session.decoder(&mut params).unwrap();
-
-        loop {
-            let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-            let bytes_read = io::copy(
-                &mut io::Read::take(&mut file, free_buffer_len),
-                &mut bitstream,
-            )
-            .unwrap();
-
-            let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
-
-            if bytes_read == 0 {
-                break;
-            }
-        }
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn decode_hevc_1080p_file_frame() {
-        // Open file to read from
-        let file = std::fs::File::open("tests/frozen1080.hevc").unwrap();
-
-        let mut loader = Loader::new().unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set software decoding
-        config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set decode HEVC
-        config
-            .set_filter_property(
-                "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-                Codec::HEVC,
-                None,
-            )
-            .unwrap();
-
-        let config = loader.new_config().unwrap();
-        // Set required API version to 2.2
-        config
-            .set_filter_property(
-                "mfxImplDescription.ApiVersion.Version",
-                ApiVersion::new(2, 2),
-                None,
-            )
-            .unwrap();
-
-        let mut session = loader.new_session(0).unwrap();
-
-        let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
-        let mut bitstream = Bitstream::with_codec(&mut buffer, Codec::HEVC);
-        let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
-        let bytes_read =
-            io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
-        assert_ne!(bytes_read, 0);
-
-        let mut params = session
-            .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
-            .unwrap();
-
-        let decoder = session.decoder(&mut params).unwrap();
-
-        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
     }
 }

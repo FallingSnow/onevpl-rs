@@ -8,6 +8,70 @@ use crate::utils::FilterProperty;
 
 #[EnumRepr(type = "u32")]
 #[derive(Debug, Clone, Copy)]
+#[doc = " The SkipFrame enumerator is used to define usage of mfxEncodeCtrl::SkipFrame parameter."]
+pub enum SkipFrame {
+    #[doc = "< Frame skipping is disabled, mfxEncodeCtrl::SkipFrame is ignored."]
+    NoSkip = ffi::MFX_SKIPFRAME_NO_SKIP,
+    #[doc = "< Skipping is allowed, when mfxEncodeCtrl::SkipFrame is set encoder inserts into bitstream frame\nwhere all macroblocks are encoded as skipped. Only non-reference P- and B-frames can be skipped.\nIf GopRefDist = 1 and mfxEncodeCtrl::SkipFrame is set for reference P-frame, it will be encoded\nas non-reference."]
+    InsertDummy = ffi::MFX_SKIPFRAME_INSERT_DUMMY,
+    #[doc = "< Similar to MFX_SKIPFRAME_INSERT_DUMMY, but when mfxEncodeCtrl::SkipFrame is set encoder inserts nothing into bitstream."]
+    InsertNothing = ffi::MFX_SKIPFRAME_INSERT_NOTHING,
+    #[doc = "< mfxEncodeCtrl::SkipFrame indicates number of missed frames before the current frame. Affects only BRC, current frame will be encoded as usual."]
+    BrcOnly = ffi::MFX_SKIPFRAME_BRC_ONLY,
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Debug, Clone, Copy)]
+#[doc = " The FrameType enumerator itemizes frame types. Use bit-ORed values to specify all that apply."]
+pub enum FrameType {
+    #[doc = "< Frame type is unspecified."]
+    Unknown = ffi::MFX_FRAMETYPE_UNKNOWN,
+    #[doc = "< This frame or the first field is encoded as an I-frame/field."]
+    I = ffi::MFX_FRAMETYPE_I,
+    #[doc = "< This frame or the first field is encoded as an P-frame/field."]
+    P = ffi::MFX_FRAMETYPE_P,
+    #[doc = "< This frame or the first field is encoded as an B-frame/field."]
+    B = ffi::MFX_FRAMETYPE_B,
+    #[doc = "< This frame or the first field is either an SI- or SP-frame/field."]
+    S = ffi::MFX_FRAMETYPE_S,
+    #[doc = "< This frame or the first field is encoded as a reference."]
+    Ref = ffi::MFX_FRAMETYPE_REF,
+    #[doc = "< This frame or the first field is encoded as an IDR."]
+    Idr = ffi::MFX_FRAMETYPE_IDR,
+    #[doc = "< The second field is encoded as an I-field."]
+    XI = ffi::MFX_FRAMETYPE_xI,
+    #[doc = "< The second field is encoded as an P-field."]
+    XP = ffi::MFX_FRAMETYPE_xP,
+    #[doc = "< The second field is encoded as an S-field."]
+    XB = ffi::MFX_FRAMETYPE_xB,
+    #[doc = "< The second field is an SI- or SP-field."]
+    XS = ffi::MFX_FRAMETYPE_xS,
+    #[doc = "< The second field is encoded as a reference."]
+    XRef = ffi::MFX_FRAMETYPE_xREF,
+    #[doc = "< The second field is encoded as an IDR."]
+    XIdr = ffi::MFX_FRAMETYPE_xIDR,
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Debug, Clone, Copy)]
+#[doc = "The MfxNalUnitType enumerator specifies NAL unit types supported by the HEVC encoder."]
+#[doc = "< See Table 7-1 of the ITU-T H.265 specification for the definition of these type."]
+pub enum NalUnitType {
+    #[doc = "< The encoder will decide what NAL unit type to use."]
+    Unknown = ffi::MFX_HEVC_NALU_TYPE_UNKNOWN,
+    TrailN = ffi::MFX_HEVC_NALU_TYPE_TRAIL_N,
+    TrailR = ffi::MFX_HEVC_NALU_TYPE_TRAIL_R,
+    RadlN = ffi::MFX_HEVC_NALU_TYPE_RADL_N,
+    RadlR = ffi::MFX_HEVC_NALU_TYPE_RADL_R,
+    RaslN = ffi::MFX_HEVC_NALU_TYPE_RASL_N,
+    RaslR = ffi::MFX_HEVC_NALU_TYPE_RASL_R,
+    IdrWRadl = ffi::MFX_HEVC_NALU_TYPE_IDR_W_RADL,
+    IdrNLp = ffi::MFX_HEVC_NALU_TYPE_IDR_N_LP,
+    CraNut = ffi::MFX_HEVC_NALU_TYPE_CRA_NUT,
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Debug, Clone, Copy)]
 #[doc = " The ColorFourCC enumerator itemizes color formats."]
 pub enum FourCC {
     #[doc = "< NV12 color planes. Native format for 4:2:0/8b Gen hardware implementation."]
@@ -61,7 +125,7 @@ pub enum FourCC {
     Y416 = ffi::MFX_FOURCC_Y416,
     #[doc = "< Same as NV12 but with weaved V and U values."]
     NV21 = ffi::MFX_FOURCC_NV21,
-    #[doc = "< Same as  YV12 except that the U and V plane order is reversed."]
+    #[doc = "< Same as YV12 except that the U and V plane order is reversed."]
     IyuvOrI420 = ffi::MFX_FOURCC_IYUV,
     #[doc = "< 10-bit YUV 4:2:0, each component has its own plane."]
     I010 = ffi::MFX_FOURCC_I010,
@@ -141,10 +205,10 @@ impl ApiVersion {
         ApiVersion(((major as u32) << 16) + minor as u32)
     }
     pub fn major(&self) -> u16 {
-        (self.0 >> 16) as u16 
+        (self.0 >> 16) as u16
     }
     pub fn minor(&self) -> u16 {
-        self.0 as u16 
+        self.0 as u16
     }
 }
 
@@ -162,7 +226,10 @@ impl Into<FilterProperty> for ApiVersion {
 
 impl Debug for ApiVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ApiVersion").field(&self.major()).field(&self.minor()).finish()
+        f.debug_tuple("ApiVersion")
+            .field(&self.major())
+            .field(&self.minor())
+            .finish()
     }
 }
 
@@ -227,4 +294,23 @@ pub enum SkipMode {
     More = ffi::mfxSkipMode_MFX_SKIPMODE_MORE,
     #[doc = " Skip more frames."]
     Less = ffi::mfxSkipMode_MFX_SKIPMODE_LESS,
+}
+
+#[derive(Debug)]
+#[EnumRepr(type = "u32")]
+pub enum ChromaFormat {
+    #[doc = "< Monochrome or YUV400."]
+    Monochrome = ffi::MFX_CHROMAFORMAT_MONOCHROME,
+    #[doc = "< 4:2:0 color."]
+    YUV420 = ffi::MFX_CHROMAFORMAT_YUV420,
+    #[doc = "< 4:2:2 color with horizontal sub-sampling."]
+    YUV422 = ffi::MFX_CHROMAFORMAT_YUV422,
+    #[doc = "< 4:4:4 color."]
+    YUV444 = ffi::MFX_CHROMAFORMAT_YUV444,
+    #[doc = "< 4:1:1 color."]
+    YUV411 = ffi::MFX_CHROMAFORMAT_YUV411,
+    #[doc = "< 4:2:2 color with vertical sub-sampling."]
+    YUV422V = ffi::MFX_CHROMAFORMAT_YUV422V,
+    #[doc = "< Reserved."]
+    Reserved1 = ffi::MFX_CHROMAFORMAT_RESERVED1,
 }
