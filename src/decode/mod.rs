@@ -7,7 +7,7 @@ use tracing::trace;
 use crate::{
     bitstream::Bitstream,
     constants::{FourCC, SkipMode},
-    get_library, FrameSurface, MFXVideoParams, Session,
+    get_library, FrameSurface, Session, videoparams::MfxVideoParams,
 };
 
 pub struct Decoder<'a> {
@@ -17,12 +17,12 @@ pub struct Decoder<'a> {
 impl<'a> Decoder<'a> {
     pub fn new(
         session: &'a Session,
-        params: &mut MFXVideoParams,
+        mut params: MfxVideoParams,
     ) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Init(session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoDECODE_Init(session.inner, &mut **params) }.into();
 
         trace!("Decode init = {:?}", status);
 
@@ -201,11 +201,11 @@ impl<'a> Decoder<'a> {
     /// * It restarts decoding from a new position
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-reset for more info.
-    pub fn reset(&mut self, params: &mut MFXVideoParams) -> Result<(), MfxStatus> {
+    pub fn reset(&mut self, mut params: MfxVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Reset(self.session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoDECODE_Reset(self.session.inner, &mut **params) }.into();
 
         trace!("Decode reset = {:?}", status);
 
@@ -219,13 +219,13 @@ impl<'a> Decoder<'a> {
     /// Retrieves current working parameters.
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-getvideoparam for more info.
-    pub fn params(&self) -> Result<MFXVideoParams, MfxStatus> {
+    pub fn params(&self) -> Result<MfxVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
 
-        let mut params = MFXVideoParams::new();
+        let mut params = MfxVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_GetVideoParam(self.session.inner, &mut params.inner) }
+            unsafe { lib.MFXVideoDECODE_GetVideoParam(self.session.inner, &mut **params) }
                 .into();
 
         trace!("Decode get params = {:?}", status);
@@ -302,7 +302,7 @@ mod tests {
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 
-        let decoder = session.decoder(&mut params).unwrap();
+        let decoder = session.decoder(params).unwrap();
 
         let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
     }
@@ -357,7 +357,7 @@ mod tests {
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 
-        let decoder = session.decoder(&mut params).unwrap();
+        let decoder = session.decoder(params).unwrap();
 
         loop {
             let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
@@ -422,7 +422,7 @@ mod tests {
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 
-        let decoder = session.decoder(&mut params).unwrap();
+        let decoder = session.decoder(params).unwrap();
 
         let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
     }

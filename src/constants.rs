@@ -159,6 +159,34 @@ pub enum AccelerationMode {
     HDDLUNITE = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_HDDLUNITE,
 }
 
+#[EnumRepr(type = "u32")]
+pub enum PicStruct {
+    #[doc = "< Unspecified or mixed progressive/interlaced/field pictures."]
+    Unknown = ffi::MFX_PICSTRUCT_UNKNOWN,
+    #[doc = "< Progressive picture."]
+    Progressive = ffi::MFX_PICSTRUCT_PROGRESSIVE,
+    #[doc = "< Top field in first interlaced picture."]
+    FieldTff = ffi::MFX_PICSTRUCT_FIELD_TFF,
+    #[doc = "< Bottom field in first interlaced picture."]
+    FieldBff = ffi::MFX_PICSTRUCT_FIELD_BFF,
+    #[doc = "< First field repeated: pic_struct=5 or 6 in H.264."]
+    FieldRepeated = ffi::MFX_PICSTRUCT_FIELD_REPEATED,
+    #[doc = "< Double the frame for display: pic_struct=7 in H.264."]
+    FrameDoubling = ffi::MFX_PICSTRUCT_FRAME_DOUBLING,
+    #[doc = "< Triple the frame for display: pic_struct=8 in H.264."]
+    FrameTripling = ffi::MFX_PICSTRUCT_FRAME_TRIPLING,
+    #[doc = "< Single field in a picture."]
+    FieldSingle = ffi::MFX_PICSTRUCT_FIELD_SINGLE,
+    #[doc = "< Top field in a picture: pic_struct = 1 in H.265."]
+    FieldTop = ffi::MFX_PICSTRUCT_FIELD_TOP,
+    #[doc = "< Bottom field in a picture: pic_struct = 2 in H.265."]
+    FieldBottom = ffi::MFX_PICSTRUCT_FIELD_BOTTOM,
+    #[doc = "< Paired with previous field: pic_struct = 9 or 10 in H.265."]
+    FieldPairedPrev = ffi::MFX_PICSTRUCT_FIELD_PAIRED_PREV,
+    #[doc = "< Paired with next field: pic_struct = 11 or 12 in H.265"]
+    FieldPairNext = ffi::MFX_PICSTRUCT_FIELD_PAIRED_NEXT,
+}
+
 bitflags! {
     #[doc = " The mfxMemoryFlags enumerator specifies memory access mode."]
     pub struct MemoryFlag: u32 {
@@ -175,6 +203,51 @@ bitflags! {
 
 #[EnumRepr(type = "u32")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[doc = " The TargetUsage enumerator itemizes a range of numbers from MFX_TARGETUSAGE_1, best quality, to MFX_TARGETUSAGE_7, best speed.\nIt indicates trade-offs between quality and speed. The application can use any number in the range. The actual number of supported\ntarget usages depends on implementation. If specified target usage is not supported, the encoder will use the closest supported value."]
+pub enum TargetUsage {
+    #[doc = "< Best quality"]
+    Level1 = ffi::MFX_TARGETUSAGE_1,
+    Level2 = ffi::MFX_TARGETUSAGE_2,
+    Level3 = ffi::MFX_TARGETUSAGE_3,
+    #[doc = "< Balanced quality and speed."]
+    Level4 = ffi::MFX_TARGETUSAGE_4,
+    Level5 = ffi::MFX_TARGETUSAGE_5,
+    Level6 = ffi::MFX_TARGETUSAGE_6,
+    #[doc = "< Best speed"]
+    Level7 = ffi::MFX_TARGETUSAGE_7,
+    #[doc = "< Unspecified target usage."]
+    Unknown = ffi::MFX_TARGETUSAGE_UNKNOWN,
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[doc = " The RateControlMethod enumerator itemizes bitrate control methods."]
+pub enum RateControlMethod {
+    #[doc = "< Use the constant bitrate control algorithm."]
+    CBR = ffi::MFX_RATECONTROL_CBR,
+    #[doc = "< Use the variable bitrate control algorithm."]
+    VBR = ffi::MFX_RATECONTROL_VBR,
+    #[doc = "< Use the constant quantization parameter algorithm."]
+    CQP = ffi::MFX_RATECONTROL_CQP,
+    #[doc = "< Use the average variable bitrate control algorithm."]
+    AVBR = ffi::MFX_RATECONTROL_AVBR,
+    #[doc = "Use the VBR algorithm with look ahead. It is a special bitrate control mode in the AVC encoder that has been designed\nto improve encoding quality. It works by performing extensive analysis of several dozen frames before the actual encoding and as a side\neffect significantly increases encoding delay and memory consumption.\n\nThe only available rate control parameter in this mode is mfxInfoMFX::TargetKbps. Two other parameters, MaxKbps and InitialDelayInKB,\nare ignored. To control LA depth the application can use mfxExtCodingOption2::LookAheadDepth parameter.\n\nThis method is not HRD compliant."]
+    LA = ffi::MFX_RATECONTROL_LA,
+    #[doc = "Use the Intelligent Constant Quality algorithm. This algorithm improves subjective video quality of encoded stream. Depending on content,\nit may or may not decrease objective video quality. Only one control parameter is used - quality factor, specified by mfxInfoMFX::ICQQuality."]
+    ICQ = ffi::MFX_RATECONTROL_ICQ,
+    #[doc = "Use the Video Conferencing Mode algorithm. This algorithm is similar to the VBR and uses the same set of parameters mfxInfoMFX::InitialDelayInKB,\nTargetKbpsandMaxKbps. It is tuned for IPPP GOP pattern and streams with strong temporal correlation between frames.\nIt produces better objective and subjective video quality in these conditions than other bitrate control algorithms.\nIt does not support interlaced content, B-frames and produced stream is not HRD compliant."]
+    VCM = ffi::MFX_RATECONTROL_VCM,
+    #[doc = "Use Intelligent Constant Quality algorithm with look ahead. Quality factor is specified by mfxInfoMFX::ICQQuality.\nTo control LA depth the application can use mfxExtCodingOption2::LookAheadDepth parameter.\n\nThis method is not HRD compliant."]
+    LAICQ = ffi::MFX_RATECONTROL_LA_ICQ,
+    #[doc = " Use HRD compliant look ahead rate control algorithm."]
+    LAHRD = ffi::MFX_RATECONTROL_LA_HRD,
+    #[doc = "Use the variable bitrate control algorithm with constant quality. This algorithm trying to achieve the target subjective quality with\nthe minimum number of bits, while the bitrate constraint and HRD compliance are satisfied. It uses the same set of parameters\nas VBR and quality factor specified by mfxExtCodingOption3::QVBRQuality."]
+    QVBR = ffi::MFX_RATECONTROL_QVBR,
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[doc = " The CodecFormatFourCC enumerator itemizes codecs in the FourCC format."]
 pub enum Codec {
     #[doc = "< AVC, H.264, or MPEG-4, part 10 codec."]
     AVC = ffi::MFX_CODEC_AVC,
@@ -232,16 +305,6 @@ impl Debug for ApiVersion {
             .finish()
     }
 }
-
-// #[EnumRepr(type = "u32")]
-// #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-// #[doc = " This enum itemizes implementation type."]
-// pub enum Implementation {
-//     #[doc = "< Pure Software Implementation."]
-//     Software = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE,
-//     #[doc = "< Hardware Accelerated Implementation."]
-//     Hardware = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE,
-// }
 
 bitflags! {
     #[doc = " This enum itemizes implementation type."]

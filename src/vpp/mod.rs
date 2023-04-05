@@ -1,77 +1,11 @@
-use std::time::Instant;
+use std::{time::Instant, ops::{Deref, DerefMut}};
 
 use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
-use std::mem;
 use tokio::task;
 use tracing::trace;
 
-use crate::{get_library, FrameSurface, Session, decode::Decoder, constants::{FourCC, IoPattern}};
-
-#[derive(Copy, Clone, Debug)]
-pub struct VideoParams {
-    inner: ffi::mfxVideoParam,
-}
-
-impl VideoParams {
-    pub fn new() -> Self {
-        Self {
-            inner: unsafe { mem::zeroed() },
-        }
-    }
-    // pub fn size(&self) -> &ffi::mfxFrameInfo__bindgen_ty_1__bindgen_ty_1 {
-    //     unsafe {
-    //         &self
-    //             .inner
-    //             .__bindgen_anon_1
-    //             .vpp
-    //             .FrameInfo
-    //             .__bindgen_anon_1
-    //             .__bindgen_anon_1
-    //     }
-    // }
-
-    /// If you are running VPP after a decode operation you should be using [`IoPattern::OUT_VIDEO_MEMORY`] on decode params and [`IoPattern::VIDEO_MEMORY`] on this function.
-    pub fn set_io_pattern(&mut self, pattern: IoPattern) {
-        self.inner.IOPattern = pattern.bits();
-    }
-
-    pub fn set_fourcc(&mut self, fourcc: FourCC) {
-        self.out_mut().FourCC = fourcc.repr();
-    }
-
-    /// 23.97 FPS == numerator 24000, denominator = 1001
-    pub fn set_framerate(&mut self, numerator: u32, denominator: u32) {
-        self.out_mut().FrameRateExtN = numerator;
-        self.out_mut().FrameRateExtD = denominator;
-    }
-
-    fn in_mut(&mut self) -> &mut ffi::mfxFrameInfo {
-        unsafe { &mut self.inner.__bindgen_anon_1.vpp.In }
-    }
-
-    fn out_mut(&mut self) -> &mut ffi::mfxFrameInfo {
-        unsafe { &mut self.inner.__bindgen_anon_1.vpp.Out }
-    }
-}
-
-// FIXME: This looks like it's gonna leak memory
-impl From<&crate::MFXVideoParams> for VideoParams {
-    fn from(value: &crate::MFXVideoParams) -> Self {
-        let mut params = Self::new();
-        *params.in_mut() = unsafe { value.inner.__bindgen_anon_1.mfx.FrameInfo }.clone();
-        *params.out_mut() = unsafe { value.inner.__bindgen_anon_1.mfx.FrameInfo }.clone();
-        params
-    }
-}
-
-impl TryFrom<Decoder<'_>> for VideoParams {
-    type Error = MfxStatus;
-    fn try_from(decoder: Decoder) -> Result<Self, Self::Error> {
-        let mfx_params = decoder.params()?;
-        Ok(VideoParams::from(&mfx_params))
-    }
-}
+use crate::{constants::FourCC, get_library, FrameSurface, Session, videoparams::{VideoParams, MfxVideoParams}};
 
 // pub struct FrameInfo {
 //     inner: ffi::mfxFrameInfo,
@@ -90,13 +24,16 @@ pub struct VideoProcessor<'a> {
 }
 
 impl<'a> VideoProcessor<'a> {
-    pub(crate) fn new(session: &'a Session, params: &mut VideoParams) -> Result<Self, MfxStatus> {
+    pub(crate) fn new(
+        session: &'a Session,
+        params: &mut VppVideoParams,
+    ) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
-        
-        assert!(!IoPattern::from_bits(params.inner.IOPattern).unwrap().is_empty(), "params IOPattern not set");
+
+        assert!(!params.io_pattern().is_empty(), "params IOPattern not set");
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Init(session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoVPP_Init(session.inner, &mut ***params) }.into();
 
         trace!("VPP init = {:?}", status);
 
@@ -155,7 +92,13 @@ impl<'a> VideoProcessor<'a> {
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
 
-        trace!("Process frame = {:?} {}x{} {:?}", format, width, height, start_time.elapsed());
+        trace!(
+            "Process frame = {:?} {}x{} {:?}",
+            format,
+            width,
+            height,
+            start_time.elapsed()
+        );
 
         Ok(output_surface)
     }
@@ -166,11 +109,11 @@ impl<'a> VideoProcessor<'a> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-reset
     /// for more info.
-    pub fn reset(&mut self, params: &mut VideoParams) -> Result<(), MfxStatus> {
+    pub fn reset(&mut self, mut params: VppVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Reset(self.session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoVPP_Reset(self.session.inner, &mut **params) }.into();
 
         trace!("VPP reset = {:?}", status);
 
@@ -181,18 +124,66 @@ impl<'a> VideoProcessor<'a> {
         Ok(())
     }
 
+    /// Returns surface which can be used as input for VPP. 
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvpp
+    /// for more info.
+    pub fn get_surface_input(&mut self) -> Result<FrameSurface, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXMemory_GetSurfaceForVPP(self.session.inner, &mut raw_surface) }.into();
+
+        trace!("VPP get input surface = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let surface = FrameSurface::try_from(raw_surface).unwrap();
+
+        Ok(surface)
+    }
+
+    /// Returns surface which can be used as output of VPP.  
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvppout
+    /// for more info.
+    pub fn get_surface_output(&mut self) -> Result<FrameSurface, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXMemory_GetSurfaceForVPPOut(self.session.inner, &mut raw_surface) }.into();
+
+        trace!("VPP get output surface = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let surface = FrameSurface::try_from(raw_surface).unwrap();
+
+        Ok(surface)
+    }
+
     /// Retrieves current working parameters.
     ///
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-getvideoparam
     /// for more info.
-    pub fn params(&self) -> Result<VideoParams, MfxStatus> {
+    pub fn params(&self) -> Result<VppVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
 
-        let mut params = VideoParams::new();
+        let mut params = VppVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_GetVideoParam(self.session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoVPP_GetVideoParam(self.session.inner, &mut **params) }.into();
 
         trace!("VPP get params = {:?}", status);
 
@@ -208,5 +199,64 @@ impl<'a> Drop for VideoProcessor<'a> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXVideoVPP_Close(self.session.inner) };
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+/// Configurations related to video processing. See the definition of the mfxInfoVPP structure for details. 
+pub struct VppVideoParams {
+    inner: VideoParams,
+}
+
+impl VppVideoParams {
+    pub fn fourcc(&self) -> FourCC {
+        FourCC::from_repr(self.out().FourCC).unwrap()
+    }
+    pub fn set_fourcc(&mut self, fourcc: FourCC) {
+        self.out_mut().FourCC = fourcc.repr();
+    }
+
+    /// 23.97 FPS == numerator 24000, denominator = 1001
+    pub fn set_framerate(&mut self, numerator: u32, denominator: u32) {
+        self.out_mut().FrameRateExtN = numerator;
+        self.out_mut().FrameRateExtD = denominator;
+    }
+
+    fn in_(&self) -> &ffi::mfxFrameInfo {
+        unsafe { &(*self).__bindgen_anon_1.vpp.In }
+    }
+    fn in_mut(&mut self) -> &mut ffi::mfxFrameInfo {
+        unsafe { &mut (*self).__bindgen_anon_1.vpp.In }
+    }
+
+    fn out(&self) -> &ffi::mfxFrameInfo {
+        unsafe { &(*self).__bindgen_anon_1.vpp.Out }
+    }
+    fn out_mut(&mut self) -> &mut ffi::mfxFrameInfo {
+        unsafe { &mut (*self).__bindgen_anon_1.vpp.Out }
+    }
+}
+
+impl Deref for VppVideoParams {
+    type Target = VideoParams;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for VppVideoParams {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+// FIXME: This looks like it's gonna leak memory
+impl From<&MfxVideoParams> for VppVideoParams {
+    fn from(value: &MfxVideoParams) -> Self {
+        let mut params = Self::default();
+        *params.in_mut() = unsafe { (**value).__bindgen_anon_1.mfx.FrameInfo }.clone();
+        *params.out_mut() = unsafe { (**value).__bindgen_anon_1.mfx.FrameInfo }.clone();
+        params
     }
 }

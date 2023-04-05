@@ -2,9 +2,6 @@
 ///! a raw NV12 4:2:0 8 bit frame. This frame is then converted to YUV12 4:2:0
 ///! 8 bit using the VPP and stored in a file at `/tmp/output.yuv`.
 ///!
-///! The hardware decoder or VPP seems to not crop. So the output is actually
-///! 320x192 rather than the input 320x180.
-///!
 ///! There are 3 (modern) ways to intialize hardware acceleration.
 ///! 1. You define the implementation as HARDWARE and the intel API does
 ///!    everything for you. Which is what we do in this example. Sweet!
@@ -18,7 +15,7 @@
 use std::io;
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, bitstream::Bitstream, constants, vpp::VideoParams, Loader};
+use onevpl::{self, bitstream::Bitstream, constants, vpp::VppVideoParams, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -82,18 +79,18 @@ pub async fn main() {
     .unwrap();
     assert_ne!(bytes_read, 0);
 
-    let mut mfx_params = session
+    let mfx_params = session
         .decode_header(&mut bitstream, constants::IoPattern::OUT_VIDEO_MEMORY)
         .unwrap();
 
     // Intel hardware will decode into a hardware color format like nv12 for 8 bit
     // content. We will use the hardware video processor to convert this to yuv420
     // format.
-    let mut vpp_params = VideoParams::from(&mfx_params);
+    let mut vpp_params = VppVideoParams::from(&mfx_params);
     vpp_params.set_io_pattern(constants::IoPattern::VIDEO_MEMORY);
     vpp_params.set_fourcc(constants::FourCC::YV12);
 
-    let decoder = session.decoder(&mut mfx_params).unwrap();
+    let decoder = session.decoder(mfx_params).unwrap();
     let vpp = session.video_processor(&mut vpp_params).unwrap();
 
     loop {
@@ -114,8 +111,8 @@ pub async fn main() {
                 None
             }
             Err(e) if e == MfxStatus::VideoParamChanged => {
-                let params = decoder.params().unwrap();
-                println!("Video decoding parameters changed. {:?}", params.size());
+                let _params = decoder.params().unwrap();
+                println!("Video decoding parameters changed");
                 None
             }
             Err(e) => panic!("{:?}", e),

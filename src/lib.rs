@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::fs::File;
+use std::io::{ErrorKind, Read};
 use std::{
     io::{self, Write},
     mem,
@@ -7,8 +8,9 @@ use std::{
 };
 
 use bitstream::Bitstream;
-use constants::{ApiVersion, Codec, FourCC, Implementation, IoPattern};
+use constants::{ApiVersion, FourCC, Implementation, IoPattern};
 use decode::Decoder;
+use encode::Encoder;
 use ffi::{
     mfxConfig, mfxLoader, mfxSession, mfxStructVersion, mfxStructVersion__bindgen_ty_1, mfxU32,
     mfxVariant, MfxStatus,
@@ -16,7 +18,8 @@ use ffi::{
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
+pub use videoparams::MfxVideoParams;
 use vpp::VideoProcessor;
 
 use crate::constants::{ChromaFormat, MemoryFlag};
@@ -24,9 +27,10 @@ use crate::constants::{ChromaFormat, MemoryFlag};
 pub mod bitstream;
 pub mod constants;
 pub mod decode;
-pub mod utils;
-pub mod vpp;
 pub mod encode;
+pub mod utils;
+mod videoparams;
+pub mod vpp;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -155,14 +159,74 @@ impl Config {
 }
 
 #[derive(Debug)]
+pub struct FrameRate(u32, u32);
+
+impl FrameRate {
+    pub fn new(numerator: u32, denominator: u32) -> Self {
+        Self(numerator, denominator)
+    }
+}
+
+impl From<(u32, u32)> for FrameRate {
+    fn from(value: (u32, u32)) -> Self {
+        Self(value.0, value.1)
+    }
+}
+
+// // FrameSurfaces can either be created by us or by the intel API. If this was created by the intel API, FrameSurface's inner will always be Ownership::Borrowed.
+// #[derive(Debug)]
+// pub enum Ownership<'a, T> {
+//     Borrowed(&'a mut T),
+//     Owned(T),
+// }
+
+// impl<T> Ownership<'_, T> {
+//     pub fn as_mut(&mut self) -> &mut T {
+//         match self {
+//             Ownership::Borrowed(t) => t,
+//             Ownership::Owned(t) => t,
+//         }
+//     }
+//     pub fn as_ref(&self) -> &T {
+//         match self {
+//             Ownership::Borrowed(t) => t,
+//             Ownership::Owned(t) => t,
+//         }
+//     }
+// }
+
+#[derive(Debug)]
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
+    // backing_buffer: &'b [u8]
 }
 
 unsafe impl Send for FrameSurface<'_> {}
 
 impl FrameSurface<'_> {
+    // pub fn new(
+    //     buffer: &[u8],
+    //     frame_rate: FrameRate,
+    //     fourcc: FourCC,
+    //     width: u16,
+    //     height: u16,
+    // ) -> Self {
+    //     let mut inner: ffi::mfxFrameSurface1 = unsafe { mem::zeroed() };
+    //     inner.Info.ChromaFormat = ChromaFormat::YUV420.repr() as u16;
+    //     inner.Info.FourCC = fourcc.repr();
+    //     inner.Info.FrameRateExtN = frame_rate.0;
+    //     inner.Info.FrameRateExtD = frame_rate.1;
+    //     inner.Info.PicStruct = PicStruct::Progressive.repr() as u16;
+    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropW = width;
+    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH = height;
+    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.Width = align16(width);
+    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.Height = align16(height);
+    //     Self {
+    //         inner: Ownership::Owned(inner),
+    //         read_offset: 0,
+    //     }
+    // }
     /// Guarantees readiness of both the data (pixels) and any frame's meta information (for example corruption flags) after a function completes. See [`ffi::mfxFrameSurfaceInterface::Synchronize`] for more info.
     ///
     /// Setting `timeout` to None defaults to 100 (in milliseconds)
@@ -204,7 +268,7 @@ impl FrameSurface<'_> {
         // Get memory mapping function
         let func = self.interface().Unmap.unwrap();
 
-        // Map surface data to get read access to it
+        // Unmap surface data
         let status: MfxStatus = unsafe { func(self.inner) }.into();
 
         if status != MfxStatus::NoneOrDone {
@@ -219,7 +283,7 @@ impl FrameSurface<'_> {
         // Get memory mapping function
         let func = self.interface().Release.unwrap();
 
-        // Map surface data to get read access to it
+        // Release the frame
         let status: MfxStatus = unsafe { func(self.inner) }.into();
 
         if status != MfxStatus::NoneOrDone {
@@ -227,6 +291,142 @@ impl FrameSurface<'_> {
         }
 
         Ok(())
+    }
+
+    /// Tries to read exactly one frame from buffer
+    pub fn read_one_frame(
+        &mut self,
+        reader: &mut impl Read,
+        reader_format: FourCC,
+    ) -> Result<(), MfxStatus> {
+        let data = self.inner.Data;
+        let info = self.inner.Info;
+        let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
+        let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
+        // let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
+
+        // let expected_size = w * h * 2;
+        // if buffer.len() < expected_size {;
+        //     trace!("Buffer length {} is less than {}.", buffer.len(), expected_size);
+        //     return Err(MfxStatus::MoreData);
+        // }
+
+        // We cannot rely on `self.inner.Info.FourCC` because the frame surface is created by the encoder/decoder. And the enc/dec only creates formats it can specifically read, even if the read order is just swapped (eg. YV12 and IYUV).
+        // NO-NO: let fourcc = FourCC::from_repr(self.inner.Info.FourCC).unwrap();
+        match reader_format {
+            FourCC::YV12 => {
+                // let mut buffer_pos = 0;
+                // Y plane
+                {
+                    let len = w * h;
+                    let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
+                    reader.read_exact(y).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+
+                // U plane
+                {
+                    let h = h / 2;
+                    let w = w / 2;
+                    let len = w * h;
+                    let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
+                    
+                    reader.read_exact(u).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+
+                // V plane
+                {
+                    let h = h / 2;
+                    let w = w / 2;
+                    let len = w * h;
+                    let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
+                    
+                    reader.read_exact(v).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+            }
+            FourCC::IyuvOrI420 => {
+                // let mut buffer_pos = 0;
+                // Y plane
+                {
+                    let len = w * h;
+                    let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
+                    
+                    reader.read_exact(y).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+
+                // V plane
+                {
+                    let h = h / 2;
+                    let w = w / 2;
+                    let len = w * h;
+                    let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
+                    
+                    reader.read_exact(v).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+
+                // U plane
+                {
+                    let h = h / 2;
+                    let w = w / 2;
+                    let len = w * h;
+                    let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
+                    
+                    reader.read_exact(u).map_err(|e| {
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            MfxStatus::MoreData
+                        } else {
+                            warn!("{:?}", e);
+                            MfxStatus::Unknown
+                        }
+                    })?;
+                }
+            }
+            FourCC::NV12 => todo!(),
+            _ => unimplemented!(),
+        };
+
+        Ok(())
+    }
+
+    pub fn pitch_high(&self) -> u16 {
+        self.inner.Data.PitchHigh
+    }
+    pub fn set_pitch_high(&mut self, pitch: u16) {
+        self.inner.Data.PitchHigh = pitch;
     }
 }
 
@@ -240,15 +440,19 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
     type Error = MfxStatus;
 
     fn try_from(value: *mut ffi::mfxFrameSurface1) -> Result<Self, Self::Error> {
-        let frame_surface = if let Some(frame_surface_ptr) = unsafe { value.as_mut() } {
-            Self {
-                inner: frame_surface_ptr,
-                read_offset: 0,
-                // backing_surface: None,
-            }
-        } else {
+        if value.is_null() {
             return Err(MfxStatus::NullPtr);
+        }
+        let frame_surface = Self {
+            inner: unsafe { value.as_mut().unwrap() },
+            read_offset: 0,
+            // backing_surface: None,
         };
+
+        // If timestamp is 0 set it to unknown
+        if frame_surface.inner.Data.TimeStamp == 0 {
+            frame_surface.inner.Data.TimeStamp = ffi::MFX_TIMESTAMP_UNKNOWN as u64;
+        }
 
         Ok(frame_surface)
     }
@@ -262,8 +466,8 @@ impl io::Read for FrameSurface<'_> {
         let data: ffi::mfxFrameData = self.inner.Data;
         let info: ffi::mfxFrameInfo = self.inner.Info;
 
-        let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
-        let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
+        let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropH } as usize;
+        let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropW } as usize;
 
         let mut bytes_written = 0;
 
@@ -565,31 +769,38 @@ impl Session {
         Ok(session)
     }
 
-    pub fn decoder(&self, params: &mut MFXVideoParams) -> Result<Decoder<'_>, MfxStatus> {
+    // Get a new instances of a decoder tied to this session
+    pub fn decoder(&self, params: MfxVideoParams) -> Result<Decoder<'_>, MfxStatus> {
         Decoder::new(self, params)
     }
 
+    // Get a new instances of a encoder tied to this session
+    pub fn encoder(&mut self, params: MfxVideoParams) -> Result<Encoder<'_>, MfxStatus> {
+        Encoder::new(self, params)
+    }
+
+    // Get a new instances of a video processor tied to this session
     pub fn video_processor(
         &self,
-        params: &mut crate::vpp::VideoParams,
+        params: &mut crate::vpp::VppVideoParams,
     ) -> Result<VideoProcessor<'_>, MfxStatus> {
         VideoProcessor::new(self, params)
     }
 
-    /// You probably want to set the io_pattern to `IoPattern::OUT_SYSTEM_MEMORY`
+    /// Parses the input bitstream and fills returns a [`MfxVideoParams`] structure with appropriate values, such as resolution and frame rate, for the Init API function.
     pub fn decode_header(
         &self,
         bitstream: &mut Bitstream,
         io_pattern: IoPattern,
-    ) -> Result<MFXVideoParams, MfxStatus> {
+    ) -> Result<MfxVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
 
-        let mut params = MFXVideoParams::new();
+        let mut params = MfxVideoParams::default();
         params.set_codec(bitstream.codec());
         params.set_io_pattern(io_pattern);
 
         let status: MfxStatus = unsafe {
-            lib.MFXVideoDECODE_DecodeHeader(self.inner, &mut bitstream.inner, &mut params.inner)
+            lib.MFXVideoDECODE_DecodeHeader(self.inner, &mut bitstream.inner, &mut **params)
         }
         .into();
 
@@ -599,13 +810,14 @@ impl Session {
             return Err(status);
         }
 
-        let frame_info = unsafe { params.inner.__bindgen_anon_1.mfx.FrameInfo };
+        let frame_info = unsafe { (**params).__bindgen_anon_1.mfx.FrameInfo };
         let format = FourCC::from_repr(frame_info.FourCC).unwrap();
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let framerate_n = frame_info.FrameRateExtN;
         let framerate_d = frame_info.FrameRateExtD;
         let colorspace = ChromaFormat::from_repr(frame_info.ChromaFormat as u32).unwrap();
+
         trace!(
             "Header params = {:?} {:?} {}x{} @ {}fps",
             format,
@@ -667,6 +879,24 @@ impl Session {
 
         Ok(())
     }
+
+    /// Initiates execution of an asynchronous function not already started and returns the status code after the specified asynchronous operation completes. If wait is zero, the function returns immediately. `wait` is in milliseconds and defaults to 1000.
+    pub fn sync(
+        &mut self,
+        sync_point: ffi::mfxSyncPoint,
+        wait: Option<u32>,
+    ) -> Result<MfxStatus, MfxStatus> {
+        let lib = get_library().unwrap();
+        let status =
+            unsafe { lib.MFXVideoCORE_SyncOperation(self.inner, sync_point, wait.unwrap_or(1000)) }
+                .into();
+
+        match status {
+            MfxStatus::NoneOrDone => Ok(status),
+            MfxStatus::NonePartialOutput => Ok(status),
+            status => Err(status),
+        }
+    }
 }
 
 impl Drop for Session {
@@ -690,43 +920,6 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
     debug!("Dynamic library loaded successfully");
 
     Ok(get_library().unwrap())
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct MFXVideoParams {
-    inner: ffi::mfxVideoParam,
-}
-
-impl MFXVideoParams {
-    pub fn new() -> Self {
-        Self {
-            inner: unsafe { mem::zeroed() },
-        }
-    }
-
-    pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.mfx.CodecId }).unwrap()
-    }
-
-    pub fn set_codec(&mut self, codec: Codec) {
-        self.inner.__bindgen_anon_1.mfx.CodecId = codec as u32;
-    }
-
-    pub fn set_io_pattern(&mut self, pattern: IoPattern) {
-        self.inner.IOPattern = pattern.bits();
-    }
-
-    pub fn size(&self) -> &ffi::mfxFrameInfo__bindgen_ty_1__bindgen_ty_1 {
-        unsafe {
-            &self
-                .inner
-                .__bindgen_anon_1
-                .mfx
-                .FrameInfo
-                .__bindgen_anon_1
-                .__bindgen_anon_1
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,17 +1,20 @@
 use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
-use std::{mem, time::Instant};
 use tokio::task;
-use tracing::{trace, warn};
+use std::{mem, time::Instant};
+use tracing::{debug, trace};
 
 use crate::{
     bitstream::Bitstream,
     constants::{FrameType, NalUnitType, SkipFrame},
-    get_library, FrameSurface, MFXVideoParams, Session,
+    get_library,
+    videoparams::MfxVideoParams,
+    FrameSurface, Session,
 };
 
 pub type EncodeStat = ffi::mfxEncodeStat;
 
+#[derive(Debug, Clone, Copy)]
 pub struct EncodeCtrl {
     inner: ffi::mfxEncodeCtrl,
 }
@@ -37,19 +40,16 @@ impl EncodeCtrl {
 }
 
 pub struct Encoder<'a> {
-    session: &'a Session,
+    session: &'a mut Session,
     suggested_buffer_size: u16,
 }
 
 impl<'a> Encoder<'a> {
-    pub fn new(
-        session: &'a Session,
-        params: &mut MFXVideoParams,
-    ) -> Result<Self, MfxStatus> {
+    pub fn new(session: &'a mut Session, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_Init(session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoENCODE_Init(session.inner, &mut **params) }.into();
 
         trace!("Encode init = {:?}", status);
 
@@ -57,94 +57,114 @@ impl<'a> Encoder<'a> {
             return Err(status);
         }
 
-        let suggested_buffer_size = unsafe {
-            params
-                .inner
-                .__bindgen_anon_1
-                .mfx
-                .__bindgen_anon_1
-                .__bindgen_anon_1
-                .BufferSizeInKB
+
+        let mut encoder = Self {
+            session,
+            suggested_buffer_size: 0,
         };
 
-        let encoder = Self {
-            session,
-            suggested_buffer_size,
-        };
+        let params = encoder.params()?;
+        encoder.suggested_buffer_size = params.suggested_buffer_size();
 
         Ok(encoder)
     }
 
     /// Takes a single input frame in either encoded or display order and generates its output bitstream. Make sure the output buffer is at least the size of params.BufferSizeInKB after you've created a new encoder.
     ///
-    /// To mark the end of the encoding sequence, call this function with a NULL surface pointer. Repeat the call to drain any remaining internally cached bitstreams (one frame at a time) until MFX_ERR_MORE_DATA is returned.
+    /// To mark the end of the encoding sequence, call this function with `input` set to [`None`]. Repeat the call to drain any remaining internally cached bitstreams (one frame at a time) until [`MfxStatus::MoreData`] is returned.
+    ///
+    /// Returns the number of bytes written to output.
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-encodeframeasync for more info.
     pub async fn encode(
         &mut self,
         controller: &mut EncodeCtrl,
-        input: Option<&mut FrameSurface<'_>>,
+        mut input: Option<FrameSurface<'_>>,
         output: &mut Bitstream<'_>,
         timeout: Option<u32>,
-    ) -> Result<(), MfxStatus> {
+    ) -> Result<usize, MfxStatus> {
         let lib = get_library().unwrap();
+        let encode_start = Instant::now();
+        let buffer_start_size = output.size();
 
         if output.len() < self.suggested_buffer_size as usize {
-            warn!("Output buffer is smaller than suggested. {} < {}", output.len(), self.suggested_buffer_size);
+            debug!(
+                "WARN: Output buffer is smaller than suggested. {} < {}",
+                output.len(),
+                self.suggested_buffer_size
+            );
         }
 
-        let encode_start = Instant::now();
+        let surface = input.as_mut().map_or(std::ptr::null_mut(), |s| s.inner);
 
-        let mut surface = {
-            let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
-            let surface = input.map_or(std::ptr::null_mut(), |s| s.inner);
+        let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
 
-            let status: MfxStatus = unsafe {
-                lib.MFXVideoENCODE_EncodeFrameAsync(
-                    self.session.inner,
-                    &mut controller.inner,
-                    surface,
-                    &mut output.inner,
-                    &mut sync_point,
-                )
-            }
-            .into();
+        let status: MfxStatus = unsafe {
+            lib.MFXVideoENCODE_EncodeFrameAsync(
+                self.session.inner,
+                &mut controller.inner,
+                surface,
+                &mut output.inner,
+                &mut sync_point,
+            )
+        }
+        .into();
+        trace!("Encode frame start = {:?}", status);
 
-            trace!("Encode frame start = {:?}", status);
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
 
-            if status != MfxStatus::NoneOrDone {
-                return Err(status);
-            }
-
-            FrameSurface::try_from(surface)?
-        };
-
-        task::spawn_blocking(move || {
-            surface.synchronize(timeout)?;
-            Ok(surface) as Result<FrameSurface, MfxStatus>
-        })
-        .await
-        .unwrap()?;
+        task::block_in_place(|| self.session.sync(sync_point, timeout))?;
 
         trace!("Encoded frame: {:?}", encode_start.elapsed());
 
-        Ok(())
+        let bytes_written = output.size() - buffer_start_size;
+        Ok(bytes_written as usize)
+    }
+
+    /// Returns a surface which can be used as input for the encoder.
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforencode
+    /// for more info.
+    pub fn get_surface<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
+        let lib = get_library().unwrap();
+
+        let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXMemory_GetSurfaceForEncode(self.session.inner, &mut raw_surface) }
+                .into();
+
+        trace!("Encode get surface = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        let surface = FrameSurface::try_from(raw_surface).unwrap();
+
+        Ok(surface)
     }
 
     /// Stops the current encoding operation and restores internal structures or parameters for a new encoding operation, possibly with new parameters.
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-reset for more info.
-    pub fn reset(&mut self, params: &mut MFXVideoParams) -> Result<(), MfxStatus> {
+    pub fn reset(&mut self, mut params: MfxVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_Reset(self.session.inner, &mut params.inner) }.into();
+            unsafe { lib.MFXVideoENCODE_Reset(self.session.inner, &mut **params) }.into();
 
         trace!("Decode reset = {:?}", status);
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
+
+        let params = self.params()?;
+        self.suggested_buffer_size = params.suggested_buffer_size();
 
         Ok(())
     }
@@ -177,14 +197,13 @@ impl<'a> Encoder<'a> {
     /// Retrieves current working parameters.
     ///
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-getvideoparam for more info.
-    pub fn params(&self) -> Result<MFXVideoParams, MfxStatus> {
+    pub fn params(&self) -> Result<MfxVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
 
-        let mut params = MFXVideoParams::new();
+        let mut params = MfxVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_GetVideoParam(self.session.inner, &mut params.inner) }
-                .into();
+            unsafe { lib.MFXVideoENCODE_GetVideoParam(self.session.inner, &mut **params) }.into();
 
         trace!("Encode get params = {:?}", status);
 

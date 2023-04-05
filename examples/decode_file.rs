@@ -64,11 +64,11 @@ pub async fn main() {
     assert_ne!(bytes_read, 0);
 
     // Get information about the bitstream we are about to decode
-    let mut params = session
+    let params = session
         .decode_header(&mut bitstream, constants::IoPattern::OUT_SYSTEM_MEMORY)
         .unwrap();
 
-    let decoder = session.decoder(&mut params).unwrap();
+    let decoder = session.decoder(params).unwrap();
 
     loop {
         let frame = match decoder.decode(Some(&mut bitstream), None).await {
