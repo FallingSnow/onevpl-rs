@@ -44,6 +44,6 @@ pub fn align16(x: u16) -> u16 {
     ((x + 15) >> 4) << 4
 }
 
-pub fn align32(x: u32) -> u32 {
+pub fn align32(x: u16) -> u16 {
     (x + 31) & !31
 }

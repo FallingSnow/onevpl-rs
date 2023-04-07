@@ -204,7 +204,7 @@ pub struct FrameSurface<'a> {
 
 unsafe impl Send for FrameSurface<'_> {}
 
-impl FrameSurface<'_> {
+impl<'a> FrameSurface<'a> {
     // pub fn new(
     //     buffer: &[u8],
     //     frame_rate: FrameRate,
@@ -249,12 +249,14 @@ impl FrameSurface<'_> {
     }
 
     /// Sets pointers of surface->Info.Data to actual pixel data, providing read-write access. See [`ffi::mfxFrameSurfaceInterface::Map`] for more info.
-    fn map(&mut self, access: MemoryFlag) -> Result<(), MfxStatus> {
+    fn map<'b>(&'b mut self, access: MemoryFlag) -> Result<(), MfxStatus> {
         // Get memory mapping function
         let func = self.interface().Map.unwrap();
 
         // Map surface data to get read access to it
         let status: MfxStatus = unsafe { func(self.inner, access.bits()) }.into();
+
+        trace!("Map framesurface = {:?}", status);
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -271,6 +273,8 @@ impl FrameSurface<'_> {
         // Unmap surface data
         let status: MfxStatus = unsafe { func(self.inner) }.into();
 
+        trace!("Unmap framesurface = {:?}", status);
+
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
@@ -286,6 +290,8 @@ impl FrameSurface<'_> {
         // Release the frame
         let status: MfxStatus = unsafe { func(self.inner) }.into();
 
+        trace!("Release framesurface = {:?}", status);
+
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
@@ -299,10 +305,15 @@ impl FrameSurface<'_> {
         reader: &mut impl Read,
         reader_format: FourCC,
     ) -> Result<(), MfxStatus> {
-        let data = self.inner.Data;
-        let info = self.inner.Info;
+        self.map(MemoryFlag::WRITE).unwrap();
+
+        let info = &self.inner.Info;
+        let crop_h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropH } as usize;
         let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
+        let crop_w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropW } as usize;
         let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
+        
+        let data = &mut self.inner.Data;
         // let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
 
         // let expected_size = w * h * 2;
@@ -311,113 +322,130 @@ impl FrameSurface<'_> {
         //     return Err(MfxStatus::MoreData);
         // }
 
+
         // We cannot rely on `self.inner.Info.FourCC` because the frame surface is created by the encoder/decoder. And the enc/dec only creates formats it can specifically read, even if the read order is just swapped (eg. YV12 and IYUV).
-        // NO-NO: let fourcc = FourCC::from_repr(self.inner.Info.FourCC).unwrap();
-        match reader_format {
-            FourCC::YV12 => {
-                // let mut buffer_pos = 0;
-                // Y plane
-                {
-                    let len = w * h;
-                    let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
-                    reader.read_exact(y).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
+        let fourcc = FourCC::from_repr(self.inner.Info.FourCC).unwrap();
+        // let chromaformat = ChromaFormat::from_repr(self.inner.Info.ChromaFormat as u32).unwrap();
+        let mut read_func = || {
+            match (fourcc, reader_format) {
+                (FourCC::YV12 | FourCC::IyuvOrI420, FourCC::YV12) => {
+                    // Y plane
+                    {
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_3.Y.is_null()});
+                        let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
+                        
+                        reader.read_exact(y).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
+    
+                    // V plane
+                    {
+                        let h = h / 2;
+                        let w = w / 2;
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_5.V.is_null()});
+                        let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
+                        
+                        reader.read_exact(v).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
+    
+                    // U plane
+                    {
+                        let h = h / 2;
+                        let w = w / 2;
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_4.U.is_null()});
+                        let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
+                        
+                        reader.read_exact(u).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
                 }
+                (FourCC::YV12 | FourCC::IyuvOrI420, FourCC::IyuvOrI420) => {
+                    // Y plane
+                    {
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_3.Y.is_null()});
+                        let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
+                        
+                        reader.read_exact(y).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
+    
+                    // U plane
+                    {
+                        let h = h / 2;
+                        let w = w / 2;
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_4.U.is_null()});
+                        let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
+                        
+                        reader.read_exact(u).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
+    
+                    // V plane
+                    {
+                        let h = h / 2;
+                        let w = w / 2;
+                        let len = w * h;
+                        assert!(unsafe {!data.__bindgen_anon_5.V.is_null()});
+                        let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
+                        
+                        reader.read_exact(v).map_err(|e| {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                MfxStatus::MoreData
+                            } else {
+                                warn!("{:?}", e);
+                                MfxStatus::Unknown
+                            }
+                        })?;
+                    }
+                }
+                (FourCC::NV12, FourCC::YV12) => todo!(),
+                _ => unimplemented!(),
+            };
 
-                // U plane
-                {
-                    let h = h / 2;
-                    let w = w / 2;
-                    let len = w * h;
-                    let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
-                    
-                    reader.read_exact(u).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
-                }
-
-                // V plane
-                {
-                    let h = h / 2;
-                    let w = w / 2;
-                    let len = w * h;
-                    let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
-                    
-                    reader.read_exact(v).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
-                }
-            }
-            FourCC::IyuvOrI420 => {
-                // let mut buffer_pos = 0;
-                // Y plane
-                {
-                    let len = w * h;
-                    let y = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
-                    
-                    reader.read_exact(y).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
-                }
-
-                // V plane
-                {
-                    let h = h / 2;
-                    let w = w / 2;
-                    let len = w * h;
-                    let v = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
-                    
-                    reader.read_exact(v).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
-                }
-
-                // U plane
-                {
-                    let h = h / 2;
-                    let w = w / 2;
-                    let len = w * h;
-                    let u = unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
-                    
-                    reader.read_exact(u).map_err(|e| {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            MfxStatus::MoreData
-                        } else {
-                            warn!("{:?}", e);
-                            MfxStatus::Unknown
-                        }
-                    })?;
-                }
-            }
-            FourCC::NV12 => todo!(),
-            _ => unimplemented!(),
+            Ok(())
         };
+
+        let result: Result<(), MfxStatus> = read_func();
+
+        self.unmap().unwrap();
+
+        result?;
 
         Ok(())
     }
@@ -740,12 +768,14 @@ impl Drop for AcceleratorHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct Session {
     inner: mfxSession,
     accelerator: Option<AcceleratorHandle>,
 }
 
 impl Session {
+    #[tracing::instrument]
     pub(crate) fn new(loader: &mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
         let mut session: mfxSession = unsafe { mem::zeroed() };
@@ -770,12 +800,12 @@ impl Session {
     }
 
     // Get a new instances of a decoder tied to this session
-    pub fn decoder(&self, params: MfxVideoParams) -> Result<Decoder<'_>, MfxStatus> {
+    pub fn decoder<'a: 'b, 'b>(&'a self, params: MfxVideoParams) -> Result<Decoder<'b>, MfxStatus> {
         Decoder::new(self, params)
     }
 
     // Get a new instances of a encoder tied to this session
-    pub fn encoder(&mut self, params: MfxVideoParams) -> Result<Encoder<'_>, MfxStatus> {
+    pub fn encoder<'a: 'b, 'b>(&'a self, params: MfxVideoParams) -> Result<Encoder<'b>, MfxStatus> {
         Encoder::new(self, params)
     }
 
@@ -882,7 +912,7 @@ impl Session {
 
     /// Initiates execution of an asynchronous function not already started and returns the status code after the specified asynchronous operation completes. If wait is zero, the function returns immediately. `wait` is in milliseconds and defaults to 1000.
     pub fn sync(
-        &mut self,
+        &self,
         sync_point: ffi::mfxSyncPoint,
         wait: Option<u32>,
     ) -> Result<MfxStatus, MfxStatus> {

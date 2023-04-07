@@ -88,7 +88,7 @@ pub async fn main() {
     // format.
     let mut vpp_params = VppVideoParams::from(&mfx_params);
     vpp_params.set_io_pattern(constants::IoPattern::VIDEO_MEMORY);
-    vpp_params.set_fourcc(constants::FourCC::YV12);
+    vpp_params.set_out_fourcc(constants::FourCC::YV12);
 
     let decoder = session.decoder(mfx_params).unwrap();
     let vpp = session.video_processor(&mut vpp_params).unwrap();

@@ -4,7 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::constants::{ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage};
+use crate::{constants::{ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage}, utils::align16};
 
 #[derive(Copy, Clone, Debug)]
 /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_structs_cross_component.html#_CPPv413mfxVideoParam for more info.
@@ -158,13 +158,16 @@ impl MfxVideoParams {
             .__bindgen_anon_2
             .ICQQuality = quality;
     }
+    
     pub fn set_framerate(&mut self, numerator: u32, denominator: u32) {
         (**self).__bindgen_anon_1.mfx.FrameInfo.FrameRateExtN = numerator;
         (**self).__bindgen_anon_1.mfx.FrameInfo.FrameRateExtD = denominator;
     }
+    
     pub fn set_fourcc(&mut self, format: FourCC) {
         (**self).__bindgen_anon_1.mfx.FrameInfo.FourCC = format.repr();
     }
+
     pub fn set_chroma_format(&mut self, format: ChromaFormat) {
         (**self).__bindgen_anon_1.mfx.FrameInfo.ChromaFormat = format.repr() as u16;
     }
@@ -187,7 +190,7 @@ impl MfxVideoParams {
                 .CropW
         }
     }
-    pub fn set_width(&mut self, width: u16) {
+    pub fn set_width(&mut self, width: u16) -> u16 {
         (**self)
             .__bindgen_anon_1
             .mfx
@@ -195,6 +198,7 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .CropW = width;
+        // let width = align16(width);
         (**self)
             .__bindgen_anon_1
             .mfx
@@ -202,6 +206,7 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .Width = width;
+        width
     }
 
     pub fn height(&self) -> u16 {
@@ -215,7 +220,7 @@ impl MfxVideoParams {
                 .CropH
         }
     }
-    pub fn set_height(&mut self, height: u16) {
+    pub fn set_height(&mut self, height: u16) -> u16 {
         (**self)
             .__bindgen_anon_1
             .mfx
@@ -223,6 +228,7 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .CropH = height;
+        // let height = align16(height);
         (**self)
             .__bindgen_anon_1
             .mfx
@@ -230,16 +236,18 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .Height = height;
+        height
     }
 
-    pub fn suggested_buffer_size(&self) -> u16 {
+    /// Returns the maximum size of any compressed frames in bytes.
+    pub fn suggested_buffer_size(&self) -> usize {
         unsafe {
             (**self)
                 .__bindgen_anon_1
                 .mfx
                 .__bindgen_anon_1
                 .__bindgen_anon_1
-                .BufferSizeInKB
+                .BufferSizeInKB as usize * 1000
         }
     }
 }

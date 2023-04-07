@@ -15,6 +15,7 @@ pub struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
+    #[tracing::instrument]
     pub fn new(
         session: &'a Session,
         mut params: MfxVideoParams,
@@ -298,7 +299,7 @@ mod tests {
             io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
         assert_ne!(bytes_read, 0);
 
-        let mut params = session
+        let params = session
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 
@@ -353,7 +354,7 @@ mod tests {
         .unwrap();
         assert_ne!(bytes_read, 0);
 
-        let mut params = session
+        let params = session
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 
@@ -418,7 +419,7 @@ mod tests {
             io::copy(&mut io::Read::take(file, free_buffer_len), &mut bitstream).unwrap();
         assert_ne!(bytes_read, 0);
 
-        let mut params = session
+        let params = session
             .decode_header(&mut bitstream, IoPattern::OUT_SYSTEM_MEMORY)
             .unwrap();
 

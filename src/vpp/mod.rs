@@ -1,11 +1,20 @@
-use std::{time::Instant, ops::{Deref, DerefMut}};
+use std::{
+    ops::{Deref, DerefMut},
+    time::Instant,
+};
 
 use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
 use tokio::task;
 use tracing::trace;
 
-use crate::{constants::FourCC, get_library, FrameSurface, Session, videoparams::{VideoParams, MfxVideoParams}};
+use crate::{
+    constants::{ChromaFormat, FourCC, PicStruct},
+    get_library,
+    utils::{align16, align32},
+    videoparams::{MfxVideoParams, VideoParams},
+    FrameSurface, Session,
+};
 
 // pub struct FrameInfo {
 //     inner: ffi::mfxFrameInfo,
@@ -24,6 +33,7 @@ pub struct VideoProcessor<'a> {
 }
 
 impl<'a> VideoProcessor<'a> {
+    #[tracing::instrument]
     pub(crate) fn new(
         session: &'a Session,
         params: &mut VppVideoParams,
@@ -124,12 +134,12 @@ impl<'a> VideoProcessor<'a> {
         Ok(())
     }
 
-    /// Returns surface which can be used as input for VPP. 
+    /// Returns surface which can be used as input for VPP.
     ///
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvpp
     /// for more info.
-    pub fn get_surface_input(&mut self) -> Result<FrameSurface, MfxStatus> {
+    pub fn get_surface_input<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
@@ -153,13 +163,14 @@ impl<'a> VideoProcessor<'a> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvppout
     /// for more info.
-    pub fn get_surface_output(&mut self) -> Result<FrameSurface, MfxStatus> {
+    pub fn get_surface_output<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
 
         let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForVPPOut(self.session.inner, &mut raw_surface) }.into();
+            unsafe { lib.MFXMemory_GetSurfaceForVPPOut(self.session.inner, &mut raw_surface) }
+                .into();
 
         trace!("VPP get output surface = {:?}", status);
 
@@ -203,7 +214,7 @@ impl<'a> Drop for VideoProcessor<'a> {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-/// Configurations related to video processing. See the definition of the mfxInfoVPP structure for details. 
+/// Configurations related to video processing. See the definition of the mfxInfoVPP structure for details.
 pub struct VppVideoParams {
     inner: VideoParams,
 }
@@ -211,15 +222,6 @@ pub struct VppVideoParams {
 impl VppVideoParams {
     pub fn fourcc(&self) -> FourCC {
         FourCC::from_repr(self.out().FourCC).unwrap()
-    }
-    pub fn set_fourcc(&mut self, fourcc: FourCC) {
-        self.out_mut().FourCC = fourcc.repr();
-    }
-
-    /// 23.97 FPS == numerator 24000, denominator = 1001
-    pub fn set_framerate(&mut self, numerator: u32, denominator: u32) {
-        self.out_mut().FrameRateExtN = numerator;
-        self.out_mut().FrameRateExtD = denominator;
     }
 
     fn in_(&self) -> &ffi::mfxFrameInfo {
@@ -234,6 +236,88 @@ impl VppVideoParams {
     }
     fn out_mut(&mut self) -> &mut ffi::mfxFrameInfo {
         unsafe { &mut (*self).__bindgen_anon_1.vpp.Out }
+    }
+    pub fn set_in_crop(&mut self, x: u16, y: u16, w: u16, h: u16) {
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropX = x;
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropY = y;
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropW = w;
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropH = h;
+    }
+    pub fn set_out_crop(&mut self, x: u16, y: u16, w: u16, h: u16) {
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.CropX = x;
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.CropY = y;
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.CropW = w;
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.CropH = h;
+    }
+
+    pub fn set_in_width(&mut self, width: u16) -> u16 {
+        let width = align16(width);
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.Width = width;
+        width
+    }
+    pub fn set_out_width(&mut self, width: u16) -> u16 {
+        let width = align16(width);
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.Width = width;
+        width
+    }
+
+    /// Returns the height actually set
+    pub fn set_in_height(&mut self, height: u16) -> u16 {
+        // Needs to be multiple of 32 when picstruct is not progressive
+        let height = if self.in_picstruct() == PicStruct::Progressive {
+            align16(height)
+        } else {
+            align32(height)
+        };
+        self.in_mut().__bindgen_anon_1.__bindgen_anon_1.Height = height;
+        height
+    }
+    /// Returns the height actually set
+    pub fn set_out_height(&mut self, height: u16) -> u16 {
+        let height = if self.out_picstruct() == PicStruct::Progressive {
+            align16(height)
+        } else {
+            align32(height)
+        };
+        self.out_mut().__bindgen_anon_1.__bindgen_anon_1.Height = height;
+        height
+    }
+
+    pub fn in_picstruct(&self) -> PicStruct {
+        PicStruct::from_repr(self.in_().PicStruct as u32).unwrap()
+    }
+    pub fn out_picstruct(&self) -> PicStruct {
+        PicStruct::from_repr(self.out().PicStruct as u32).unwrap()
+    }
+    pub fn set_in_picstruct(&mut self, format: PicStruct) {
+        self.in_mut().PicStruct = format.repr() as u16;
+    }
+    pub fn set_out_picstruct(&mut self, format: PicStruct) {
+        self.out_mut().PicStruct = format.repr() as u16;
+    }
+
+    pub fn set_in_chroma_format(&mut self, format: ChromaFormat) {
+        self.in_mut().ChromaFormat = format.repr() as u16;
+    }
+    pub fn set_out_chroma_format(&mut self, format: ChromaFormat) {
+        self.out_mut().ChromaFormat = format.repr() as u16;
+    }
+
+    pub fn set_in_fourcc(&mut self, fourcc: FourCC) {
+        self.in_mut().FourCC = fourcc.repr();
+    }
+    pub fn set_out_fourcc(&mut self, fourcc: FourCC) {
+        self.out_mut().FourCC = fourcc.repr();
+    }
+
+    /// 23.97 FPS == numerator 24000, denominator = 1001
+    pub fn set_in_framerate(&mut self, numerator: u32, denominator: u32) {
+        self.in_mut().FrameRateExtN = numerator;
+        self.in_mut().FrameRateExtD = denominator;
+    }
+    pub fn set_out_framerate(&mut self, numerator: u32, denominator: u32) {
+        self.out_mut().FrameRateExtN = numerator;
+        self.out_mut().FrameRateExtD = denominator;
     }
 }
 

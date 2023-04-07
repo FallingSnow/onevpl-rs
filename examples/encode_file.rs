@@ -1,4 +1,4 @@
-///! This example decodes an hevc encoded file (tests/frozen.hevc) and produces a raw YUV 4:2:0 8 bit file at /tmp/output.yuv
+///! This example encodes a yuv file (tests/frozen180.yuv) and produces a HEVC YUV 4:2:0 8 bit file at /tmp/output.hevc
 use std::io::{BufRead, ErrorKind};
 
 use intel_onevpl_sys::MfxStatus;
@@ -56,7 +56,7 @@ pub async fn main() {
         )
         .unwrap();
 
-    let mut session = loader.new_session(0).unwrap();
+    let session = loader.new_session(0).unwrap();
 
     let mut params = MfxVideoParams::default();
 
@@ -85,12 +85,13 @@ pub async fn main() {
     let params = encoder.params().unwrap();
 
     // Create a backing buffer that will contain the bitstream of the encoded output
-    let suggested_buffer_size = params.suggested_buffer_size() as usize;
-    let mut buffer: Vec<u8> = vec![0; suggested_buffer_size + 5000];
+    let suggested_buffer_size = params.suggested_buffer_size();
+    let mut buffer: Vec<u8> = vec![0; suggested_buffer_size];
     let mut bitstream = Bitstream::with_codec(&mut buffer, codec);
 
     loop {
-        // Try to fill out read buffer, if end of file then break
+        // Try to fill read buffer with data from the unput file, if end of file just continue
+        // Loop break will be handled by the not having enough data to read one frame
         if let Err(e) = reader.fill_buf() {
             if e.kind() != ErrorKind::UnexpectedEof {
                 panic!("{:?}", e);
@@ -100,12 +101,19 @@ pub async fn main() {
         // Gives you additional per frame encoder controls that we won't use in this example
         let mut ctrl = EncodeCtrl::new();
 
+        // In this example we let the encoder handle the allocation of surfaces
         let mut frame_surface = encoder.get_surface().unwrap();
-        if let Err(e) = frame_surface.read_one_frame(&mut reader, constants::FourCC::YV12) {
-            dbg!(e);
-            break;
+
+        // Read a frame's worth of data from reader into the allocated FrameSurface
+        // If we need more data to read one frame, we can assume we are done
+        if let Err(e) = frame_surface.read_one_frame(&mut reader, constants::FourCC::IyuvOrI420) {
+            match e {
+                MfxStatus::MoreData => break,
+                _ => panic!("{:?}", e),
+            };
         };
 
+        // Attempt to encode a frame. The encode method returns the number of bytes written to the bitstream. If more data
         let bytes_written = match encoder
             .encode(&mut ctrl, Some(frame_surface), &mut bitstream, None)
             .await
@@ -115,6 +123,7 @@ pub async fn main() {
             Err(e) => panic!("{:?}", e),
         };
 
+        // If data was written to the bitstream we try to copy the bitstream data to our output file
         if bytes_written > 0 {
             let bitstream_size = bitstream.size();
             let bytes_copied = std::io::copy(&mut bitstream, &mut output).unwrap();
@@ -122,11 +131,13 @@ pub async fn main() {
         }
     }
 
+    println!("Flushing encoder");
+
     loop {
         let mut ctrl = EncodeCtrl::new();
         let bytes_written = match encoder.encode(&mut ctrl, None, &mut bitstream, None).await {
             Ok(bytes) => bytes,
-            Err(e) if e == MfxStatus::MoreData => 0,
+            Err(e) if e == MfxStatus::MoreData => break,
             Err(e) => panic!("{:?}", e),
         };
 

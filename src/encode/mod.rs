@@ -39,13 +39,15 @@ impl EncodeCtrl {
     }
 }
 
+#[derive(Debug)]
 pub struct Encoder<'a> {
-    session: &'a mut Session,
-    suggested_buffer_size: u16,
+    session: &'a Session,
+    suggested_buffer_size: usize,
 }
 
 impl<'a> Encoder<'a> {
-    pub fn new(session: &'a mut Session, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
+    #[tracing::instrument]
+    pub fn new(session: &'a Session, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
@@ -87,7 +89,7 @@ impl<'a> Encoder<'a> {
         let encode_start = Instant::now();
         let buffer_start_size = output.size();
 
-        if output.len() < self.suggested_buffer_size as usize {
+        if output.len() < self.suggested_buffer_size {
             debug!(
                 "WARN: Output buffer is smaller than suggested. {} < {}",
                 output.len(),
