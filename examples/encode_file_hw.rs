@@ -4,9 +4,9 @@ use std::io::{BufRead, ErrorKind};
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{
     bitstream::Bitstream,
-    constants::{self, IoPattern},
+    constants::{self, IoPattern, FourCC},
     encode::EncodeCtrl,
-    Loader, MfxVideoParams, FrameReader,
+    Loader, MfxVideoParams, vpp::VppVideoParams, FrameReader,
 };
 
 #[tokio::main]
@@ -18,16 +18,15 @@ pub async fn main() {
     let file = std::fs::File::open("tests/frozen180.yuv").unwrap();
     let reader = std::io::BufReader::with_capacity(122880, file);
     let mut output = std::fs::File::create("/tmp/output.hevc").unwrap();
-
     let width = 320;
     let height = 180;
-    let target_kbps = 1000;
-    let codec = constants::Codec::HEVC;
-
-    // We have to create a frame reader for 2 reasons.
-    // 1. The encoder will only create frame surfaces for specific FOURCC formats even if just the frame order is different. Therefore the FrameReader stores information about the format the reader is in, then it is read in the correct order to create a buffer containing the format the encoder expects. This allows you to read YV12 files even though the intel encoders only take IYUV.
-    // 2. Correct width and height information may not be carried over to surfaces created by the encoder. This is due to the fact that the hardware encoder will only accept widths/heights that are 16 byte aligned. Therefore we need to bring that information along seperately so we can properly read the input.
     let mut frame_reader = FrameReader::new(reader, width, height, constants::FourCC::IyuvOrI420);
+    let target_kbps = 1000;
+    // let bits_per_pixel = 12f32; // NV12/YUV420
+    // let bytes_per_pixel = bits_per_pixel / 8f32; // 8 bits per byte
+    // let stride = (width as f32 * bytes_per_pixel) as u32;
+    // let bytes_per_frame = stride * height;
+    let codec = constants::Codec::HEVC;
 
     let mut loader = Loader::new().unwrap();
 
@@ -35,7 +34,7 @@ pub async fn main() {
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::SOFTWARE,
+            constants::Implementation::HARDWARE,
             None,
         )
         .unwrap();
@@ -60,40 +59,59 @@ pub async fn main() {
 
     let session = loader.new_session(0).unwrap();
 
-    let mut params = MfxVideoParams::default();
+    // See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/appendix/VPL_apnds_a.html#specifying-configuration-parameters for the parameters you have to set.
+    let mut mfx_params = MfxVideoParams::default();
 
     // Encoding config
-    params.set_codec(codec);
-    params.set_target_usage(constants::TargetUsage::Level4);
-    params.set_rate_control_method(constants::RateControlMethod::VBR);
-    params.set_target_kbps(target_kbps);
+    mfx_params.set_codec(codec);
+    mfx_params.set_target_usage(constants::TargetUsage::Level4);
+    mfx_params.set_rate_control_method(constants::RateControlMethod::CBR);
+    mfx_params.set_target_kbps(target_kbps);
     // 24000/1001 = 23.976 fps
-    params.set_framerate(24000, 1001);
+    mfx_params.set_framerate(24000, 1001);
 
     // Input frame config
-    params.set_fourcc(constants::FourCC::IyuvOrI420);
-    params.set_chroma_format(constants::ChromaFormat::YUV420);
-    params.set_io_pattern(IoPattern::IN_SYSTEM_MEMORY);
+    mfx_params.set_fourcc(FourCC::NV12);
+    mfx_params.set_chroma_format(constants::ChromaFormat::YUV420);
+    mfx_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY);
 
     // We must know before hand the size of the frames we are giving to the encoder
-    params.set_height(height);
-    params.set_width(width);
+    mfx_params.set_height(height);
+    mfx_params.set_width(width);
 
     // dbg!(params);
 
-    let mut encoder = session.encoder(params).unwrap();
+    let mut encoder = session.encoder(mfx_params).unwrap();
 
     // Get the configured params from the encoder
-    let params = encoder.params().unwrap();
+    let mfx_params = encoder.params().unwrap();
+
+    let mut vpp_params = VppVideoParams::default();
+    vpp_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
+
+    vpp_params.set_in_fourcc(FourCC::IyuvOrI420);
+    vpp_params.set_in_height(height);
+    vpp_params.set_in_width(width);
+    vpp_params.set_in_crop(0, 0, width, height);
+    vpp_params.set_in_framerate(24000, 1001);
+    vpp_params.set_in_picstruct(constants::PicStruct::Progressive);
+    
+    vpp_params.set_out_fourcc(FourCC::NV12);
+    vpp_params.set_out_height(height);
+    vpp_params.set_out_width(width);
+    vpp_params.set_out_crop(0, 0, width, height);
+    vpp_params.set_out_framerate(24000, 1001);
+    vpp_params.set_out_picstruct(constants::PicStruct::Progressive);
+
+    let mut vpp = session.video_processor(&mut vpp_params).unwrap();
 
     // Create a backing buffer that will contain the bitstream of the encoded output
-    let suggested_buffer_size = params.suggested_buffer_size();
+    let suggested_buffer_size = mfx_params.suggested_buffer_size();
     let mut buffer: Vec<u8> = vec![0; suggested_buffer_size];
     let mut bitstream = Bitstream::with_codec(&mut buffer, codec);
 
     loop {
-        // Try to fill read buffer with data from the unput file, if end of file just continue
-        // Loop break will be handled by the not having enough data to read one frame
+        // Try to fill out read buffer, if end of file then break
         if let Err(e) = frame_reader.fill_buf() {
             if e.kind() != ErrorKind::UnexpectedEof {
                 panic!("{:?}", e);
@@ -103,11 +121,7 @@ pub async fn main() {
         // Gives you additional per frame encoder controls that we won't use in this example
         let mut ctrl = EncodeCtrl::new();
 
-        // In this example we let the encoder handle the allocation of surfaces
-        let mut frame_surface = encoder.get_surface().unwrap();
-
-        // Read a frame's worth of data from reader into the allocated FrameSurface
-        // If we need more data to read one frame, we can assume we are done
+        let mut frame_surface = vpp.get_surface_input().unwrap();
         if let Err(e) = frame_surface.read_one_frame(&mut frame_reader) {
             match e {
                 MfxStatus::MoreData => break,
@@ -115,9 +129,10 @@ pub async fn main() {
             };
         };
 
-        // Attempt to encode a frame. The encode method returns the number of bytes written to the bitstream. If more data
+        let vpp_frame = vpp.process(Some(&mut frame_surface), None).await.unwrap();
+
         let bytes_written = match encoder
-            .encode(&mut ctrl, Some(frame_surface), &mut bitstream, None)
+            .encode(&mut ctrl, Some(vpp_frame), &mut bitstream, None)
             .await
         {
             Ok(bytes) => bytes,
@@ -125,7 +140,6 @@ pub async fn main() {
             Err(e) => panic!("{:?}", e),
         };
 
-        // If data was written to the bitstream we try to copy the bitstream data to our output file
         if bytes_written > 0 {
             let bitstream_size = bitstream.size();
             let bytes_copied = std::io::copy(&mut bitstream, &mut output).unwrap();

@@ -198,7 +198,7 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .CropW = width;
-        // let width = align16(width);
+        let width = align16(width);
         (**self)
             .__bindgen_anon_1
             .mfx
@@ -228,7 +228,7 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .CropH = height;
-        // let height = align16(height);
+        let height = align16(height);
         (**self)
             .__bindgen_anon_1
             .mfx
