@@ -11,7 +11,6 @@ use tracing::trace;
 use crate::{
     constants::{ChromaFormat, FourCC, PicStruct},
     get_library,
-    utils::{align16, align32},
     videoparams::{MfxVideoParams, VideoParams},
     FrameSurface, Session,
 };
