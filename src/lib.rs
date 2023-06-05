@@ -1044,11 +1044,13 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
         return Ok(vpl);
     }
 
-    // #[cfg(target_os = "windows")]
+    #[cfg(target_os = "windows")]
+    let library_name = "libvpl";
     // let lib = unsafe { ffi::vpl::new(PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/bin/libvpl.dll")) }?;
-    // #[cfg(target_os = "linux")]
+    #[cfg(target_os = "linux")]
+    let library_name = "vpl";
     let lib = {
-        let library_name = libloading::library_filename("libvpl");
+        let library_name = libloading::library_filename(library_name);
         let lib = unsafe { ffi::vpl::new(library_name) }?;
         lib
     };
