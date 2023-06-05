@@ -237,6 +237,7 @@ impl VppVideoParams {
     fn out_mut(&mut self) -> &mut ffi::mfxFrameInfo {
         unsafe { &mut (*self).__bindgen_anon_1.vpp.Out }
     }
+
     pub fn set_in_crop(&mut self, x: u16, y: u16, w: u16, h: u16) {
         self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropX = x;
         self.in_mut().__bindgen_anon_1.__bindgen_anon_1.CropY = y;
@@ -250,37 +251,18 @@ impl VppVideoParams {
         self.out_mut().__bindgen_anon_1.__bindgen_anon_1.CropH = h;
     }
 
-    pub fn set_in_width(&mut self, width: u16) -> u16 {
-        let width = align16(width);
+    pub fn set_in_width(&mut self, width: u16) {
         self.in_mut().__bindgen_anon_1.__bindgen_anon_1.Width = width;
-        width
     }
-    pub fn set_out_width(&mut self, width: u16) -> u16 {
-        let width = align16(width);
+    pub fn set_out_width(&mut self, width: u16) {
         self.out_mut().__bindgen_anon_1.__bindgen_anon_1.Width = width;
-        width
     }
 
-    /// Returns the height actually set
-    pub fn set_in_height(&mut self, height: u16) -> u16 {
-        // Needs to be multiple of 32 when picstruct is not progressive
-        let height = if self.in_picstruct() == PicStruct::Progressive {
-            align16(height)
-        } else {
-            align32(height)
-        };
+    pub fn set_in_height(&mut self, height: u16) {
         self.in_mut().__bindgen_anon_1.__bindgen_anon_1.Height = height;
-        height
     }
-    /// Returns the height actually set
-    pub fn set_out_height(&mut self, height: u16) -> u16 {
-        let height = if self.out_picstruct() == PicStruct::Progressive {
-            align16(height)
-        } else {
-            align32(height)
-        };
+    pub fn set_out_height(&mut self, height: u16) {
         self.out_mut().__bindgen_anon_1.__bindgen_anon_1.Height = height;
-        height
     }
 
     pub fn in_picstruct(&self) -> PicStruct {
@@ -335,7 +317,7 @@ impl DerefMut for VppVideoParams {
     }
 }
 
-// FIXME: This looks like it's gonna leak memory
+// FIXME: This looks like it's gonna be a use after free
 impl From<&MfxVideoParams> for VppVideoParams {
     fn from(value: &MfxVideoParams) -> Self {
         let mut params = Self::default();

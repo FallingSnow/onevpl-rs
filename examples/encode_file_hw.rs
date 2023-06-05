@@ -6,7 +6,7 @@ use onevpl::{
     bitstream::Bitstream,
     constants::{self, IoPattern, FourCC},
     encode::EncodeCtrl,
-    Loader, MfxVideoParams, vpp::VppVideoParams, FrameReader,
+    Loader, MfxVideoParams, vpp::VppVideoParams, utils::{hw_align_height, hw_align_width},
 };
 
 #[tokio::main]
@@ -16,16 +16,14 @@ pub async fn main() {
 
     // Open file to read from
     let file = std::fs::File::open("tests/frozen180.yuv").unwrap();
-    let reader = std::io::BufReader::with_capacity(122880, file);
+    let mut reader = std::io::BufReader::with_capacity(122880, file);
     let mut output = std::fs::File::create("/tmp/output.hevc").unwrap();
     let width = 320;
     let height = 180;
-    let mut frame_reader = FrameReader::new(reader, width, height, constants::FourCC::IyuvOrI420);
+    let input_frame_struct = constants::PicStruct::Progressive;
+    let hw_width = hw_align_width(width);
+    let hw_height = hw_align_height(height, input_frame_struct);
     let target_kbps = 1000;
-    // let bits_per_pixel = 12f32; // NV12/YUV420
-    // let bytes_per_pixel = bits_per_pixel / 8f32; // 8 bits per byte
-    // let stride = (width as f32 * bytes_per_pixel) as u32;
-    // let bytes_per_frame = stride * height;
     let codec = constants::Codec::HEVC;
 
     let mut loader = Loader::new().unwrap();
@@ -76,32 +74,32 @@ pub async fn main() {
     mfx_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY);
 
     // We must know before hand the size of the frames we are giving to the encoder
-    mfx_params.set_height(height);
-    mfx_params.set_width(width);
-
-    // dbg!(params);
+    mfx_params.set_height(hw_height);
+    mfx_params.set_width(hw_width);
+    mfx_params.set_crop(width, height);
 
     let mut encoder = session.encoder(mfx_params).unwrap();
 
     // Get the configured params from the encoder
     let mfx_params = encoder.params().unwrap();
 
+    // We need to use the VPP because when HW encoding only frames in HW formats are supported (Eg. YUV12 -> NV12)
     let mut vpp_params = VppVideoParams::default();
     vpp_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
 
     vpp_params.set_in_fourcc(FourCC::IyuvOrI420);
-    vpp_params.set_in_height(height);
-    vpp_params.set_in_width(width);
+    vpp_params.set_in_picstruct(input_frame_struct);
+    vpp_params.set_in_height(hw_height);
+    vpp_params.set_in_width(hw_width);
     vpp_params.set_in_crop(0, 0, width, height);
     vpp_params.set_in_framerate(24000, 1001);
-    vpp_params.set_in_picstruct(constants::PicStruct::Progressive);
     
     vpp_params.set_out_fourcc(FourCC::NV12);
-    vpp_params.set_out_height(height);
-    vpp_params.set_out_width(width);
+    vpp_params.set_out_picstruct(constants::PicStruct::Progressive);
+    vpp_params.set_out_height(hw_height);
+    vpp_params.set_out_width(hw_width);
     vpp_params.set_out_crop(0, 0, width, height);
     vpp_params.set_out_framerate(24000, 1001);
-    vpp_params.set_out_picstruct(constants::PicStruct::Progressive);
 
     let mut vpp = session.video_processor(&mut vpp_params).unwrap();
 
@@ -112,7 +110,7 @@ pub async fn main() {
 
     loop {
         // Try to fill out read buffer, if end of file then break
-        if let Err(e) = frame_reader.fill_buf() {
+        if let Err(e) = reader.fill_buf() {
             if e.kind() != ErrorKind::UnexpectedEof {
                 panic!("{:?}", e);
             }
@@ -122,7 +120,7 @@ pub async fn main() {
         let mut ctrl = EncodeCtrl::new();
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_one_frame(&mut frame_reader) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut reader, constants::FourCC::IyuvOrI420) {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

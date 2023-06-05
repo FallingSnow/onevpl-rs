@@ -159,7 +159,7 @@ pub enum AccelerationMode {
     HDDLUNITE = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_HDDLUNITE,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 #[EnumRepr(type = "u32")]
 pub enum PicStruct {
     #[doc = "< Unspecified or mixed progressive/interlaced/field pictures."]

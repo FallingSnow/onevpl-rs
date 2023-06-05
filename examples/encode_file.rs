@@ -6,7 +6,7 @@ use onevpl::{
     bitstream::Bitstream,
     constants::{self, IoPattern},
     encode::EncodeCtrl,
-    Loader, MfxVideoParams, FrameReader,
+    Loader, MfxVideoParams,
 };
 
 #[tokio::main]
@@ -16,18 +16,13 @@ pub async fn main() {
 
     // Open file to read from
     let file = std::fs::File::open("tests/frozen180.yuv").unwrap();
-    let reader = std::io::BufReader::with_capacity(122880, file);
+    let mut reader = std::io::BufReader::with_capacity(122880, file);
     let mut output = std::fs::File::create("/tmp/output.hevc").unwrap();
 
     let width = 320;
     let height = 180;
     let target_kbps = 1000;
     let codec = constants::Codec::HEVC;
-
-    // We have to create a frame reader for 2 reasons.
-    // 1. The encoder will only create frame surfaces for specific FOURCC formats even if just the frame order is different. Therefore the FrameReader stores information about the format the reader is in, then it is read in the correct order to create a buffer containing the format the encoder expects. This allows you to read YV12 files even though the intel encoders only take IYUV.
-    // 2. Correct width and height information may not be carried over to surfaces created by the encoder. This is due to the fact that the hardware encoder will only accept widths/heights that are 16 byte aligned. Therefore we need to bring that information along seperately so we can properly read the input.
-    let mut frame_reader = FrameReader::new(reader, width, height, constants::FourCC::IyuvOrI420);
 
     let mut loader = Loader::new().unwrap();
 
@@ -78,6 +73,7 @@ pub async fn main() {
     // We must know before hand the size of the frames we are giving to the encoder
     params.set_height(height);
     params.set_width(width);
+    params.set_crop(width, height);
 
     // dbg!(params);
 
@@ -92,9 +88,9 @@ pub async fn main() {
     let mut bitstream = Bitstream::with_codec(&mut buffer, codec);
 
     loop {
-        // Try to fill read buffer with data from the unput file, if end of file just continue
+        // Try to fill read buffer with data from the input file, if end of file just continue
         // Loop break will be handled by the not having enough data to read one frame
-        if let Err(e) = frame_reader.fill_buf() {
+        if let Err(e) = reader.fill_buf() {
             if e.kind() != ErrorKind::UnexpectedEof {
                 panic!("{:?}", e);
             }
@@ -108,7 +104,7 @@ pub async fn main() {
 
         // Read a frame's worth of data from reader into the allocated FrameSurface
         // If we need more data to read one frame, we can assume we are done
-        if let Err(e) = frame_surface.read_one_frame(&mut frame_reader) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut reader, constants::FourCC::IyuvOrI420) {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

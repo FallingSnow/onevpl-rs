@@ -1,7 +1,6 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
-use std::ops::DerefMut;
 use std::{
     io::{self, Write},
     mem,
@@ -196,36 +195,15 @@ impl From<(u32, u32)> for FrameRate {
 //     }
 // }
 
-pub struct FrameReader<T: Read> {
-    reader: T,
-    width: u16,
-    height: u16,
-    format: FourCC,
-}
-
-impl<T: Read> FrameReader<T> {
-    pub fn new(reader: T, width: u16, height: u16, format: FourCC) -> Self {
-        Self {
-            reader,
-            width,
-            height,
-            format,
-        }
-    }
-}
-
-impl<T: Read> Deref for FrameReader<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.reader
-    }
-}
-
-impl<T: Read> DerefMut for FrameReader<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.reader
-    }
+#[derive(Debug)]
+pub struct FrameSurfaceBounds {
+    pub pitch: u16,
+    pub width: u16,
+    pub height: u16,
+    pub crop_x: u16,
+    pub crop_y: u16,
+    pub crop_width: u16,
+    pub crop_height: u16,
 }
 
 #[derive(Debug)]
@@ -238,28 +216,6 @@ pub struct FrameSurface<'a> {
 unsafe impl Send for FrameSurface<'_> {}
 
 impl<'a> FrameSurface<'a> {
-    // pub fn new(
-    //     buffer: &[u8],
-    //     frame_rate: FrameRate,
-    //     fourcc: FourCC,
-    //     width: u16,
-    //     height: u16,
-    // ) -> Self {
-    //     let mut inner: ffi::mfxFrameSurface1 = unsafe { mem::zeroed() };
-    //     inner.Info.ChromaFormat = ChromaFormat::YUV420.repr() as u16;
-    //     inner.Info.FourCC = fourcc.repr();
-    //     inner.Info.FrameRateExtN = frame_rate.0;
-    //     inner.Info.FrameRateExtD = frame_rate.1;
-    //     inner.Info.PicStruct = PicStruct::Progressive.repr() as u16;
-    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropW = width;
-    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH = height;
-    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.Width = align16(width);
-    //     inner.Info.__bindgen_anon_1.__bindgen_anon_1.Height = align16(height);
-    //     Self {
-    //         inner: Ownership::Owned(inner),
-    //         read_offset: 0,
-    //     }
-    // }
     /// Guarantees readiness of both the data (pixels) and any frame's meta information (for example corruption flags) after a function completes. See [`ffi::mfxFrameSurfaceInterface::Synchronize`] for more info.
     ///
     /// Setting `timeout` to None defaults to 100 (in milliseconds)
@@ -332,181 +288,246 @@ impl<'a> FrameSurface<'a> {
         Ok(())
     }
 
-    /// Tries to read exactly one frame from buffer
-    pub fn read_one_frame<T: Read>(
+    #[inline]
+    pub fn fourcc(&self) -> FourCC {
+        FourCC::from_repr(self.inner.Info.FourCC).unwrap()
+    }
+
+    /// pitch = Number of bytes in a row (video width in bytes + padding)
+    pub fn bounds(&self) -> FrameSurfaceBounds {
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let width = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.Width };
+        let height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.Height };
+        let crop_x = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropX };
+        let crop_y = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropY };
+        let crop_width = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropW };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+        FrameSurfaceBounds {
+            pitch,
+            width,
+            height,
+            crop_x,
+            crop_y,
+            crop_width,
+            crop_height,
+        }
+    }
+
+    /// Remember to take pitch into account when writing to
+    pub fn y<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_3.Y.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::NV12 | FourCC::YV12 | FourCC::IyuvOrI420 => {
+                crop_height as usize * pitch as usize
+            }
+            FourCC::NV16 => todo!(),
+            FourCC::YUY2 => todo!(),
+            FourCC::P8 => todo!(),
+            FourCC::P8Texture => todo!(),
+            FourCC::P010 => todo!(),
+            FourCC::P016 => todo!(),
+            FourCC::P210 => todo!(),
+            FourCC::AYUV => todo!(),
+            FourCC::AyuvRgb4 => todo!(),
+            FourCC::UYVY => todo!(),
+            FourCC::Y210 => todo!(),
+            FourCC::Y410 => todo!(),
+            FourCC::Y216 => todo!(),
+            FourCC::Y416 => todo!(),
+            FourCC::NV21 => todo!(),
+            FourCC::I010 => todo!(),
+            FourCC::I210 => todo!(),
+            FourCC::I422 => todo!(),
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_3.Y, length) }
+    }
+
+    pub fn u<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_4.U.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::NV12 | FourCC::YV12 | FourCC::IyuvOrI420 => {
+                (crop_height / 2) as usize * (pitch / 2) as usize
+            }
+            FourCC::NV16 => todo!(),
+            FourCC::YUY2 => todo!(),
+            FourCC::P8 => todo!(),
+            FourCC::P8Texture => todo!(),
+            FourCC::P010 => todo!(),
+            FourCC::P016 => todo!(),
+            FourCC::P210 => todo!(),
+            FourCC::AYUV => todo!(),
+            FourCC::AyuvRgb4 => todo!(),
+            FourCC::UYVY => todo!(),
+            FourCC::Y210 => todo!(),
+            FourCC::Y410 => todo!(),
+            FourCC::Y216 => todo!(),
+            FourCC::Y416 => todo!(),
+            FourCC::NV21 => todo!(),
+            FourCC::I010 => todo!(),
+            FourCC::I210 => todo!(),
+            FourCC::I422 => todo!(),
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_4.U, length) }
+    }
+
+    pub fn v<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_5.V.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::NV12 | FourCC::YV12 | FourCC::IyuvOrI420 => {
+                (crop_height / 2) as usize * (pitch / 2) as usize
+            }
+            FourCC::NV16 => todo!(),
+            FourCC::YUY2 => todo!(),
+            FourCC::P8 => todo!(),
+            FourCC::P8Texture => todo!(),
+            FourCC::P010 => todo!(),
+            FourCC::P016 => todo!(),
+            FourCC::P210 => todo!(),
+            FourCC::AYUV => todo!(),
+            FourCC::AyuvRgb4 => todo!(),
+            FourCC::UYVY => todo!(),
+            FourCC::Y210 => todo!(),
+            FourCC::Y410 => todo!(),
+            FourCC::Y216 => todo!(),
+            FourCC::Y416 => todo!(),
+            FourCC::NV21 => todo!(),
+            FourCC::I010 => todo!(),
+            FourCC::I210 => todo!(),
+            FourCC::I422 => todo!(),
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.V, length) }
+    }
+
+    fn read_iyuv_or_i420_frame<R: Read>(
         &mut self,
-        reader: &mut FrameReader<T>
+        source: &mut R
+    ) -> Result<(), MfxStatus> {
+        let bounds = self.bounds();
+        let y = self.y();
+        let u = self.u();
+        let v = self.v();
+        let crop_h = bounds.crop_height as usize;
+        let crop_w = bounds.crop_width as usize;
+        let pitch = bounds.pitch as usize;
+
+        // Y plane
+        {
+            for i_h in 0..crop_h {
+                let offset = i_h * pitch;
+                let buffer = &mut y[offset..offset + crop_w];
+                source.read_exact(buffer).map_err(|e| {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        MfxStatus::MoreData
+                    } else {
+                        warn!("{:?}", e);
+                        MfxStatus::Unknown
+                    }
+                })?;
+            }
+        }
+
+        // U plane
+        {
+            let pitch = pitch / 2;
+            let crop_h = crop_h / 2;
+            let crop_w = crop_w / 2;
+            for i_h in 0..crop_h {
+                let offset = i_h * pitch;
+                let buffer = &mut u[offset..offset + crop_w];
+                source.read_exact(buffer).map_err(|e| {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        MfxStatus::MoreData
+                    } else {
+                        warn!("{:?}", e);
+                        MfxStatus::Unknown
+                    }
+                })?;
+            }
+        }
+
+        // V plane
+        {
+            let pitch = pitch / 2;
+            let crop_h = crop_h / 2;
+            let crop_w = crop_w / 2;
+            for i_h in 0..crop_h {
+                let offset = i_h * pitch;
+                let buffer = &mut v[offset..offset + crop_w];
+                source.read_exact(buffer).map_err(|e| {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        MfxStatus::MoreData
+                    } else {
+                        warn!("{:?}", e);
+                        MfxStatus::Unknown
+                    }
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Reads a single frame in the given pixel format. Unfortunately you need to pass the width and height of the frame because the frame's internal size is unreliable.
+    pub fn read_raw_frame<R: Read>(
+        &mut self,
+        source: &mut R,
+        format: FourCC
     ) -> Result<(), MfxStatus> {
         self.map(MemoryFlag::WRITE).unwrap();
-
-        let info = &self.inner.Info;
-        let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Height } as usize;
-        let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.Width } as usize;
-        let crop_h = reader.height as usize;
-        let crop_w = reader.width as usize;
-
-        let data = &mut self.inner.Data;
-        // let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
-
-        // let expected_size = w * h * 2;
-        // if buffer.len() < expected_size {;
-        //     trace!("Buffer length {} is less than {}.", buffer.len(), expected_size);
-        //     return Err(MfxStatus::MoreData);
-        // }
-
-        
-        // We cannot rely on `self.inner.Info.FourCC` because the frame surface is created by the encoder/decoder. And the enc/dec only creates formats it can specifically read, even if the read order is just swapped (eg. YV12 and IYUV).
-        let fourcc = FourCC::from_repr(self.inner.Info.FourCC).unwrap();
-        trace!("Reading a frame {:?} -> {:?}", reader.format, fourcc);
-        // let chromaformat = ChromaFormat::from_repr(self.inner.Info.ChromaFormat as u32).unwrap();
-        let mut read_func = || {
-            match (fourcc, reader.format) {
-                (FourCC::YV12 | FourCC::IyuvOrI420, FourCC::YV12) => {
-                    // Y plane
-                    {
-                        let len = w * h;
-                        assert!(unsafe { !data.__bindgen_anon_3.Y.is_null() });
-                        let y =
-                            unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_3.Y, len) };
-
-                        reader.read_exact(y).map_err(|e| {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                MfxStatus::MoreData
-                            } else {
-                                warn!("{:?}", e);
-                                MfxStatus::Unknown
-                            }
-                        })?;
-                    }
-
-                    // V plane
-                    {
-                        let h = h / 2;
-                        let w = w / 2;
-                        let len = w * h;
-                        assert!(unsafe { !data.__bindgen_anon_5.V.is_null() });
-                        let v =
-                            unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_5.V, len) };
-
-                        reader.read_exact(v).map_err(|e| {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                MfxStatus::MoreData
-                            } else {
-                                warn!("{:?}", e);
-                                MfxStatus::Unknown
-                            }
-                        })?;
-                    }
-
-                    // U plane
-                    {
-                        let h = h / 2;
-                        let w = w / 2;
-                        let len = w * h;
-                        assert!(unsafe { !data.__bindgen_anon_4.U.is_null() });
-                        let u =
-                            unsafe { std::slice::from_raw_parts_mut(data.__bindgen_anon_4.U, len) };
-
-                        reader.read_exact(u).map_err(|e| {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                MfxStatus::MoreData
-                            } else {
-                                warn!("{:?}", e);
-                                MfxStatus::Unknown
-                            }
-                        })?;
-                    }
-                }
-                (FourCC::YV12 | FourCC::IyuvOrI420, FourCC::IyuvOrI420) => {
-                    // Y plane
-                    {
-                        assert!(unsafe { !data.__bindgen_anon_3.Y.is_null() });
-
-                        for i_h in 0..crop_h {
-                            let offset = i_h * w;
-                            let y = unsafe {
-                                std::slice::from_raw_parts_mut(
-                                    data.__bindgen_anon_3.Y.offset(offset as isize),
-                                    crop_w,
-                                )
-                            };
-                            reader.read_exact(y).map_err(|e| {
-                                if e.kind() == ErrorKind::UnexpectedEof {
-                                    MfxStatus::MoreData
-                                } else {
-                                    warn!("{:?}", e);
-                                    MfxStatus::Unknown
-                                }
-                            })?;
-                        }
-                    }
-
-                    // U plane
-                    {
-                        let h = h / 2;
-                        let w = w / 2;
-                        let crop_h = crop_h / 2;
-                        let crop_w = crop_w / 2;
-                        assert!(unsafe { !data.__bindgen_anon_4.U.is_null() });
-                        for i_h in 0..crop_h {
-                            let offset = i_h * w;
-                            let u = unsafe {
-                                std::slice::from_raw_parts_mut(
-                                    data.__bindgen_anon_4.U.offset(offset as isize),
-                                    crop_w,
-                                )
-                            };
-                            reader.read_exact(u).map_err(|e| {
-                                if e.kind() == ErrorKind::UnexpectedEof {
-                                    MfxStatus::MoreData
-                                } else {
-                                    warn!("{:?}", e);
-                                    MfxStatus::Unknown
-                                }
-                            })?;
-                        }
-                    }
-
-                    // V plane
-                    {
-                        let h = h / 2;
-                        let w = w / 2;
-                        let crop_h = crop_h / 2;
-                        let crop_w = crop_w / 2;
-                        assert!(unsafe { !data.__bindgen_anon_5.V.is_null() });
-                        for i_h in 0..crop_h {
-                            let offset = i_h * w;
-                            let v = unsafe {
-                                std::slice::from_raw_parts_mut(
-                                    data.__bindgen_anon_5.V.offset(offset as isize),
-                                    crop_w,
-                                )
-                            };
-                            reader.read_exact(v).map_err(|e| {
-                                if e.kind() == ErrorKind::UnexpectedEof {
-                                    MfxStatus::MoreData
-                                } else {
-                                    warn!("{:?}", e);
-                                    MfxStatus::Unknown
-                                }
-                            })?;
-                        }
-                    }
-                }
-                (FourCC::NV12, FourCC::YV12) => todo!(),
-                _ => unimplemented!(),
-            };
-
-            Ok(())
+        let mut read_func = || match format {
+            FourCC::NV12 => todo!(),
+            FourCC::YV12 => todo!(),
+            FourCC::NV16 => todo!(),
+            FourCC::YUY2 => todo!(),
+            FourCC::RGB565 => todo!(),
+            FourCC::RGBP => todo!(),
+            FourCC::RGB3 => todo!(),
+            FourCC::Rgb4OrBgra => todo!(),
+            FourCC::P8 => todo!(),
+            FourCC::P8Texture => todo!(),
+            FourCC::P010 => todo!(),
+            FourCC::P016 => todo!(),
+            FourCC::P210 => todo!(),
+            FourCC::BGR4 => todo!(),
+            FourCC::A2RGB10 => todo!(),
+            FourCC::ARGB16 => todo!(),
+            FourCC::ABGR16 => todo!(),
+            FourCC::R16 => todo!(),
+            FourCC::AYUV => todo!(),
+            FourCC::AyuvRgb4 => todo!(),
+            FourCC::UYVY => todo!(),
+            FourCC::Y210 => todo!(),
+            FourCC::Y410 => todo!(),
+            FourCC::Y216 => todo!(),
+            FourCC::Y416 => todo!(),
+            FourCC::NV21 => todo!(),
+            FourCC::IyuvOrI420 => self.read_iyuv_or_i420_frame(source),
+            FourCC::I010 => todo!(),
+            FourCC::I210 => todo!(),
+            FourCC::I422 => todo!(),
+            FourCC::BGRP => todo!(),
         };
 
         let result: Result<(), MfxStatus> = read_func();
 
         self.unmap().unwrap();
 
-        result?;
-
-        Ok(())
+        result
     }
 
     pub fn pitch_high(&self) -> u16 {
@@ -553,8 +574,10 @@ impl io::Read for FrameSurface<'_> {
         let data: ffi::mfxFrameData = self.inner.Data;
         let info: ffi::mfxFrameInfo = self.inner.Info;
 
-        let h = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropH } as usize;
-        let w = unsafe { info.__bindgen_anon_1.__bindgen_anon_1.CropW } as usize;
+        let bounds = self.bounds();
+        let h = bounds.crop_height as usize;
+        let w = bounds.crop_width as usize;
+        let pitch = bounds.pitch as usize;
 
         let mut bytes_written = 0;
 
@@ -567,7 +590,6 @@ impl io::Read for FrameSurface<'_> {
                     FourCC::IyuvOrI420 | FourCC::YV12 => {
                         #[cfg(feature = "vector-write")]
                         let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
-                        let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
 
                         // Y
                         let y_start = self.read_offset / w;

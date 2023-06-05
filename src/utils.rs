@@ -1,5 +1,7 @@
 use intel_onevpl_sys as ffi;
 
+use crate::constants::PicStruct;
+
 #[derive(Debug, Copy, Clone)]
 pub enum FilterProperty {
     I32(i32),
@@ -46,4 +48,16 @@ pub fn align16(x: u16) -> u16 {
 
 pub fn align32(x: u16) -> u16 {
     (x + 31) & !31
+}
+
+pub fn hw_align_width(width: u16) -> u16 {
+    align16(width)
+}
+    // Needs to be multiple of 32 when picstruct is not progressive
+pub fn hw_align_height(height: u16, picstruct: PicStruct) -> u16 {
+    if picstruct == PicStruct::Progressive {
+        align16(height)
+    } else {
+        align32(height)
+    }
 }
