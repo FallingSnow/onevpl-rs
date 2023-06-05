@@ -843,6 +843,7 @@ impl Drop for AcceleratorHandle {
     fn drop(&mut self) {
         match self {
             AcceleratorHandle::VAAPI((_, va_display)) => {
+                #[cfg(target_os = "linux")]
                 unsafe { libva_sys::va_display_drm::vaTerminate(*va_display) };
             }
         }

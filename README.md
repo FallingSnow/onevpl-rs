@@ -3,6 +3,7 @@
 # oneVPL
 oneVPL is Intel's replacement for intel-media-sdk.
 
+
 ## Features
 - [X] Software Encode
 - [x] Hardware Encode
@@ -13,6 +14,16 @@ oneVPL is Intel's replacement for intel-media-sdk.
 - [ ] Advanced Video Post/Pre Processing (VPP)
     - Sharpening, Denoise, Rotate, etc.
 
+## Dependencies
+Building bindings requires clang to be installed.
+* [clang](https://rust-lang.github.io/rust-bindgen/requirements.html)
+
+### Windows
+If you install clang tools with VS build tools, you may have to manually set the libclang path with an environmental variable to build. The folder should contain `libclang.dll`. For example in powershell:
+```
+$env:LIBCLANG_PATH="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"
+cargo build
+```
 
 ## Usage
 See examples folder.

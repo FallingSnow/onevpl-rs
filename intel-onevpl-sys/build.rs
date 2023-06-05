@@ -2,13 +2,26 @@ use std::{env, path::PathBuf};
 
 fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let lib_vpl_include_path = env::var("LIBVPL_INCLUDE_PATH");
 
     println!("cargo:rustc-link-lib=dylib=vpl");
 
-    let libvpl = pkg_config::probe_library("vpl").unwrap();
-    // https://github.com/Intel-Media-SDK/MediaSDK/blob/master/api/include/mfxvideo.h
-    // https://rust-lang.github.io/rust-bindgen/tutorial-3.html
-    let libvpl_include_path = libvpl.include_paths[0].join("vpl");
+    let libvpl_include_path = match lib_vpl_include_path {
+        Ok(path) => PathBuf::from(path),
+        _ => {
+            #[cfg(not(target_os = "windows"))]
+            {
+                // https://github.com/Intel-Media-SDK/MediaSDK/blob/master/api/include/mfxvideo.h
+                // https://rust-lang.github.io/rust-bindgen/tutorial-3.html
+                let libvpl = pkg_config::probe_library("vpl").unwrap();
+                libvpl.include_paths[0].join("vpl")
+            }
+            #[cfg(target_os = "windows")]
+            PathBuf::from("C:/Program Files (x86)/vpl/include/vpl/")
+        }
+    };
+    
+
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
