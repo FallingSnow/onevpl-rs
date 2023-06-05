@@ -17,9 +17,10 @@ oneVPL is Intel's replacement for intel-media-sdk.
 ## Dependencies
 Building bindings requires clang to be installed.
 * [clang](https://rust-lang.github.io/rust-bindgen/requirements.html)
+* [oneVPL](https://www.intel.com/content/www/us/en/developer/articles/tool/oneapi-standalone-components.html#onevpl)
 
 ### Windows
-If you install clang tools with VS build tools, you may have to manually set the libclang path with an environmental variable to build. The folder should contain `libclang.dll`. For example in powershell:
+If you install clang tools with VS build tools (not recommended), you may have to manually set the libclang path with an environmental variable in order to build. The folder should contain `libclang.dll`. For example in powershell:
 ```
 $env:LIBCLANG_PATH="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"
 cargo build

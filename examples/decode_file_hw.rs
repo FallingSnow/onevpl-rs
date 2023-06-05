@@ -12,7 +12,7 @@
 ///!    deprecated)
 ///!
 ///! This library supports all 3 methods.
-use std::io;
+use std::{io, path::PathBuf, env};
 
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{self, bitstream::Bitstream, constants, vpp::VppVideoParams, Loader};
@@ -25,7 +25,9 @@ pub async fn main() {
 
     // Open file to read from
     let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
-    let mut output = std::fs::File::create("/tmp/output.yuv").unwrap();
+    let mut output_path = PathBuf::from(env::temp_dir());
+    output_path.push("output.yuv");
+    let mut output = std::fs::File::create(output_path).unwrap();
 
     let mut loader = Loader::new().unwrap();
 
@@ -34,7 +36,7 @@ pub async fn main() {
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::HARDWARE,
+            constants::ImplementationType::HARDWARE,
             None,
         )
         .unwrap();

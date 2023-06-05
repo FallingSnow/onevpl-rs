@@ -138,7 +138,7 @@ impl<'a> Decoder<'a> {
         .unwrap()?;
 
         let frame_info = output_surface.inner.Info;
-        let format = FourCC::from_repr(frame_info.FourCC).unwrap();
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
 
@@ -252,7 +252,7 @@ mod tests {
 
     use tracing_test::traced_test;
 
-    use crate::{Loader, constants::{Implementation, ApiVersion, Codec, IoPattern}, bitstream::Bitstream};
+    use crate::{Loader, constants::{ImplementationType, ApiVersion, Codec, IoPattern}, bitstream::Bitstream};
     
     const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -267,7 +267,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
+            .set_filter_property("mfxImplDescription.Impl", ImplementationType::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -319,7 +319,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
+            .set_filter_property("mfxImplDescription.Impl", ImplementationType::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();
@@ -387,7 +387,7 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
+            .set_filter_property("mfxImplDescription.Impl", ImplementationType::SOFTWARE, None)
             .unwrap();
 
         let config = loader.new_config().unwrap();

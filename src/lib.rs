@@ -1,6 +1,7 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
+use std::path::PathBuf;
 use std::{
     io::{self, Write},
     mem,
@@ -8,7 +9,7 @@ use std::{
 };
 
 use bitstream::Bitstream;
-use constants::{ApiVersion, FourCC, Implementation, IoPattern};
+use constants::{ApiVersion, FourCC, ImplementationType, IoPattern};
 use decode::Decoder;
 use encode::Encoder;
 use ffi::{
@@ -18,7 +19,9 @@ use ffi::{
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
-use tracing::{debug, error, trace, warn};
+#[cfg(target_os = "linux")]
+use tracing::error;
+use tracing::{debug, trace, warn};
 pub use videoparams::MfxVideoParams;
 use vpp::VideoProcessor;
 
@@ -84,6 +87,17 @@ impl Loader {
         let config = self.new_config()?;
         config.set_filter_property(name, value, version)
     }
+
+    // TODO: Finish
+    // pub fn implementations(&mut self) {
+    //     let lib = get_library().unwrap();
+    //     let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
+    //     let config = unsafe { lib.MFXEnumImplementations(self.inner, 0, format, ) };
+    //     if config.is_null() {
+    //         return Err(MfxStatus::Unknown);
+    //     }
+    //     return Ok(Self { inner: config });
+    // }
 }
 
 impl Deref for Loader {
@@ -243,7 +257,7 @@ impl<'a> FrameSurface<'a> {
         let func = self.interface().Map.unwrap();
 
         // Map surface data to get read access to it
-        let status: MfxStatus = unsafe { func(self.inner, access.bits()) }.into();
+        let status: MfxStatus = unsafe { func(self.inner, access.bits() as u32) }.into();
 
         trace!("Map framesurface = {:?}", status);
 
@@ -290,7 +304,7 @@ impl<'a> FrameSurface<'a> {
 
     #[inline]
     pub fn fourcc(&self) -> FourCC {
-        FourCC::from_repr(self.inner.Info.FourCC).unwrap()
+        FourCC::from_repr(self.inner.Info.FourCC as ffi::_bindgen_ty_5).unwrap()
     }
 
     /// pitch = Number of bytes in a row (video width in bytes + padding)
@@ -413,10 +427,7 @@ impl<'a> FrameSurface<'a> {
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.V, length) }
     }
 
-    fn read_iyuv_or_i420_frame<R: Read>(
-        &mut self,
-        source: &mut R
-    ) -> Result<(), MfxStatus> {
+    fn read_iyuv_or_i420_frame<R: Read>(&mut self, source: &mut R) -> Result<(), MfxStatus> {
         let bounds = self.bounds();
         let y = self.y();
         let u = self.u();
@@ -486,7 +497,7 @@ impl<'a> FrameSurface<'a> {
     pub fn read_raw_frame<R: Read>(
         &mut self,
         source: &mut R,
-        format: FourCC
+        format: FourCC,
     ) -> Result<(), MfxStatus> {
         self.map(MemoryFlag::WRITE).unwrap();
         let mut read_func = || match format {
@@ -586,7 +597,7 @@ impl io::Read for FrameSurface<'_> {
         let mut write_func = || {
             'outer: {
                 // FIXME: Remove unwrap and replace with actual error
-                match FourCC::from_repr(info.FourCC).unwrap() {
+                match FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5).unwrap() {
                     FourCC::IyuvOrI420 | FourCC::YV12 => {
                         #[cfg(feature = "vector-write")]
                         let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
@@ -763,7 +774,10 @@ impl io::Read for FrameSurface<'_> {
                     _ => {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::Unsupported,
-                            format!("Unsupported format {:?}", FourCC::from_repr(info.FourCC)),
+                            format!(
+                                "Unsupported format {:?}",
+                                FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5)
+                            ),
                         ));
                     }
                 };
@@ -832,7 +846,7 @@ impl AcceleratorHandle {
             AcceleratorHandle::VAAPI((_, handle)) => &handle,
         }
     }
-    pub fn mfx_type(&self) -> u32 {
+    pub fn mfx_type(&self) -> ffi::mfxHandleType {
         match self {
             AcceleratorHandle::VAAPI(_) => ffi::mfxHandleType_MFX_HANDLE_VA_DISPLAY,
         }
@@ -841,9 +855,9 @@ impl AcceleratorHandle {
 
 impl Drop for AcceleratorHandle {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
         match self {
             AcceleratorHandle::VAAPI((_, va_display)) => {
-                #[cfg(target_os = "linux")]
                 unsafe { libva_sys::va_display_drm::vaTerminate(*va_display) };
             }
         }
@@ -923,12 +937,13 @@ impl Session {
         }
 
         let frame_info = unsafe { (**params).__bindgen_anon_1.mfx.FrameInfo };
-        let format = FourCC::from_repr(frame_info.FourCC).unwrap();
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let framerate_n = frame_info.FrameRateExtN;
         let framerate_d = frame_info.FrameRateExtD;
-        let colorspace = ChromaFormat::from_repr(frame_info.ChromaFormat as u32).unwrap();
+        let colorspace =
+            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7).unwrap();
 
         trace!(
             "Header params = {:?} {:?} {}x{} @ {}fps",
@@ -942,7 +957,7 @@ impl Session {
         Ok(params)
     }
 
-    pub fn implementation(&self) -> Result<Implementation, MfxStatus> {
+    pub fn implementation(&self) -> Result<ImplementationType, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut implementation = 0i32;
@@ -955,7 +970,8 @@ impl Session {
             return Err(status);
         }
 
-        let implementation = Implementation::from_bits_truncate(implementation as u32);
+        let implementation =
+            ImplementationType::from_bits_truncate(implementation as ffi::mfxImplType);
 
         Ok(implementation)
     }
@@ -1023,8 +1039,14 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
         return Ok(vpl);
     }
 
-    let library_name = libloading::library_filename("vpl");
-    let lib = unsafe { ffi::vpl::new(library_name) }?;
+    #[cfg(target_os = "windows")]
+    let lib = unsafe { ffi::vpl::new(PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/bin/libvpl.dll")) }?;
+    #[cfg(target_os = "linux")]
+    let lib = {
+        let library_name = libloading::library_filename("vpl");
+        let lib = unsafe { ffi::vpl::new(library_name) }?;
+        lib
+    };
 
     // FIXME: Check for failure (unwrap/expect)
     LIBRARY.set(lib);
@@ -1036,7 +1058,7 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::{ApiVersion, Codec, Implementation};
+    use crate::constants::{ApiVersion, Codec, ImplementationType};
 
     use super::*;
     use tracing_test::traced_test;
@@ -1049,7 +1071,11 @@ mod tests {
         let config = loader.new_config().unwrap();
         // Set software decoding
         config
-            .set_filter_property("mfxImplDescription.Impl", Implementation::SOFTWARE, None)
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                ImplementationType::SOFTWARE,
+                None,
+            )
             .unwrap();
 
         let config = loader.new_config().unwrap();

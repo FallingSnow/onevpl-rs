@@ -29,7 +29,7 @@ impl<'a> Bitstream<'a> {
     }
 
     pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.CodecId }).unwrap()
+        Codec::from_repr(unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.CodecId } as ffi::_bindgen_ty_14).unwrap()
     }
 
     /// The size of the backing buffer
@@ -53,11 +53,11 @@ impl<'a> Bitstream<'a> {
     }
 
     pub fn frame_type(&self) -> FrameType {
-        FrameType::from_repr(self.inner.FrameType as u32).unwrap()
+        FrameType::from_repr(self.inner.FrameType as ffi::_bindgen_ty_37).unwrap()
     }
 
     pub fn pic_struct(&self) -> PicStruct {
-        PicStruct::from_repr(self.inner.PicStruct as u32).unwrap()
+        PicStruct::from_repr(self.inner.PicStruct as ffi::_bindgen_ty_6).unwrap()
     }
 }
 

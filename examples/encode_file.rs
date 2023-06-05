@@ -1,5 +1,5 @@
 ///! This example encodes a yuv file (tests/frozen180.yuv) and produces a HEVC YUV 4:2:0 8 bit file at /tmp/output.hevc
-use std::io::{BufRead, ErrorKind};
+use std::{io::{BufRead, ErrorKind}, path::PathBuf, env};
 
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{
@@ -17,7 +17,9 @@ pub async fn main() {
     // Open file to read from
     let file = std::fs::File::open("tests/frozen180.yuv").unwrap();
     let mut reader = std::io::BufReader::with_capacity(122880, file);
-    let mut output = std::fs::File::create("/tmp/output.hevc").unwrap();
+    let mut output_path = PathBuf::from(env::temp_dir());
+    output_path.push("output.hevc");
+    let mut output = std::fs::File::create(output_path).unwrap();
 
     let width = 320;
     let height = 180;
@@ -30,7 +32,7 @@ pub async fn main() {
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::SOFTWARE,
+            constants::ImplementationType::SOFTWARE,
             None,
         )
         .unwrap();

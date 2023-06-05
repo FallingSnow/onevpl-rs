@@ -165,7 +165,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_fourcc(&mut self, format: FourCC) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.FourCC = format.repr();
+        (**self).__bindgen_anon_1.mfx.FrameInfo.FourCC = format.repr() as ffi::mfxU32;
     }
 
     pub fn set_chroma_format(&mut self, format: ChromaFormat) {
@@ -173,7 +173,7 @@ impl MfxVideoParams {
     }
 
     pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { (**self).__bindgen_anon_1.mfx.CodecId }).unwrap()
+        Codec::from_repr(unsafe { (**self).__bindgen_anon_1.mfx.CodecId } as ffi::_bindgen_ty_14).unwrap()
     }
     pub fn set_codec(&mut self, codec: Codec) {
         (**self).__bindgen_anon_1.mfx.CodecId = codec as u32;

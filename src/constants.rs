@@ -6,7 +6,8 @@ use intel_onevpl_sys as ffi;
 
 use crate::utils::FilterProperty;
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Debug, Clone, Copy)]
 #[doc = " The SkipFrame enumerator is used to define usage of mfxEncodeCtrl::SkipFrame parameter."]
 pub enum SkipFrame {
@@ -20,7 +21,8 @@ pub enum SkipFrame {
     BrcOnly = ffi::MFX_SKIPFRAME_BRC_ONLY,
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Debug, Clone, Copy)]
 #[doc = " The FrameType enumerator itemizes frame types. Use bit-ORed values to specify all that apply."]
 pub enum FrameType {
@@ -52,7 +54,8 @@ pub enum FrameType {
     XIdr = ffi::MFX_FRAMETYPE_xIDR,
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Debug, Clone, Copy)]
 #[doc = "The MfxNalUnitType enumerator specifies NAL unit types supported by the HEVC encoder."]
 #[doc = "< See Table 7-1 of the ITU-T H.265 specification for the definition of these type."]
@@ -70,7 +73,8 @@ pub enum NalUnitType {
     CraNut = ffi::MFX_HEVC_NALU_TYPE_CRA_NUT,
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Debug, Clone, Copy)]
 #[doc = " The ColorFourCC enumerator itemizes color formats."]
 pub enum FourCC {
@@ -138,7 +142,9 @@ pub enum FourCC {
 }
 
 #[doc = " This enum itemizes hardware acceleration stack to use."]
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[derive(Debug)]
 pub enum AccelerationMode {
     #[doc = "< Hardware acceleration is not applicable."]
     NA = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_NA,
@@ -160,7 +166,8 @@ pub enum AccelerationMode {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 pub enum PicStruct {
     #[doc = "< Unspecified or mixed progressive/interlaced/field pictures."]
     Unknown = ffi::MFX_PICSTRUCT_UNKNOWN,
@@ -190,7 +197,7 @@ pub enum PicStruct {
 
 bitflags! {
     #[doc = " The mfxMemoryFlags enumerator specifies memory access mode."]
-    pub struct MemoryFlag: u32 {
+    pub struct MemoryFlag: ffi::mfxMemoryFlags {
         #[doc = "< The surface is mapped for reading."]
         const READ = ffi::mfxMemoryFlags_MFX_MAP_READ; // 1
         #[doc = "< The surface is mapped for writing."]
@@ -202,7 +209,8 @@ bitflags! {
     }
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[doc = " The TargetUsage enumerator itemizes a range of numbers from MFX_TARGETUSAGE_1, best quality, to MFX_TARGETUSAGE_7, best speed.\nIt indicates trade-offs between quality and speed. The application can use any number in the range. The actual number of supported\ntarget usages depends on implementation. If specified target usage is not supported, the encoder will use the closest supported value."]
 pub enum TargetUsage {
@@ -220,7 +228,8 @@ pub enum TargetUsage {
     Unknown = ffi::MFX_TARGETUSAGE_UNKNOWN,
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[doc = " The RateControlMethod enumerator itemizes bitrate control methods."]
 pub enum RateControlMethod {
@@ -246,7 +255,8 @@ pub enum RateControlMethod {
     QVBR = ffi::MFX_RATECONTROL_QVBR,
 }
 
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[doc = " The CodecFormatFourCC enumerator itemizes codecs in the FourCC format."]
 pub enum Codec {
@@ -268,10 +278,23 @@ pub enum Codec {
 
 impl Into<FilterProperty> for Codec {
     fn into(self) -> FilterProperty {
-        FilterProperty::U32(self.repr())
+        FilterProperty::U32(self.repr() as u32)
     }
 }
 
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ImplementationCapabilitiesDeliverFormat {
+    #[doc = "< Deliver capabilities as mfxImplDescription structure."]
+    Description = ffi::mfxImplCapsDeliveryFormat_MFX_IMPLCAPS_IMPLDESCSTRUCTURE,
+    #[doc = "< Deliver capabilities as mfxImplementedFunctions structure."]
+    ImplementedFunctions = ffi::mfxImplCapsDeliveryFormat_MFX_IMPLCAPS_IMPLEMENTEDFUNCTIONS,
+    #[doc = "< Deliver pointer to the null-terminated string with the path to the\nimplementation. String is delivered in a form of buffer of\nmfxChar type."]
+    Path = ffi::mfxImplCapsDeliveryFormat_MFX_IMPLCAPS_IMPLPATH,
+}
+
+#[derive(Clone, Copy)]
 pub struct ApiVersion(u32);
 
 impl ApiVersion {
@@ -307,9 +330,49 @@ impl Debug for ApiVersion {
     }
 }
 
+#[doc = " This structure represents the implementation description."]
+#[derive(Debug)]
+pub struct Implementation {
+    #[doc = "< Version of the structure."]
+    pub version: ApiVersion,
+    #[doc = "< Impl type: software/hardware."]
+    pub implentation_type: ImplementationType,
+    #[doc = "< Default Hardware acceleration stack to use. OS dependent parameter. Use VA for Linux* and DX* for Windows*."]
+    pub acceleration_mode: AccelerationMode,
+    #[doc = "< Supported API version."]
+    pub api_verison: ApiVersion,
+    #[doc = "< Null-terminated string with implementation name given by vendor."]
+    pub implimentation_name: String,
+    #[doc = "< Null-terminated string with comma-separated list of license names of the implementation."]
+    pub license: String,
+    #[doc = "< Null-terminated string with comma-separated list of keywords specific to this implementation that dispatcher can search for."]
+    pub keywords: String,
+    #[doc = "< Standard vendor ID 0x8086 - Intel."]
+    pub vendor_id: ffi::mfxU32,
+    #[doc = "< Vendor specific number with given implementation ID."]
+    pub vendor_implementation_id: ffi::mfxU32,
+    #[doc = "< Supported device."]
+    pub dev: (), // TODO: mfxDeviceDescription,
+    #[doc = "< Decoder configuration."]
+    pub dec: (), // TODO: mfxDecoderDescription,
+    #[doc = "< Encoder configuration."]
+    pub enc: (), // TODO: mfxEncoderDescription,
+    #[doc = "< VPP configuration."]
+    pub vpp: (), // TODO: mfxVPPDescription,
+    pub __bindgen_anon_1: (), // TODO: mfxImplDescription__bindgen_ty_1,
+    #[doc = "< Supported surface pool polices."]
+    pub pool_policies: (), // TODO: mfxPoolPolicyDescription,
+    #[doc = "< Reserved for future use."]
+    pub reserved: [ffi::mfxU32; 8usize],
+    #[doc = "< Number of extension buffers. Reserved for future use. Must be 0."]
+    pub num_ext_param: ffi::mfxU32,
+    #[doc = "< Extension buffers. Reserved for future."]
+    pub ext_params: (), // TODO: mfxImplDescription__bindgen_ty_2,
+}
+
 bitflags! {
     #[doc = " This enum itemizes implementation type."]
-    pub struct Implementation: u32 {
+    pub struct ImplementationType: ffi::mfxImplType {
         #[doc = "< Pure Software Implementation."]
         const SOFTWARE = ffi::mfxImplType_MFX_IMPL_TYPE_SOFTWARE;
         #[doc = "< Hardware Accelerated Implementation."]
@@ -317,9 +380,9 @@ bitflags! {
     }
 }
 
-impl Into<FilterProperty> for Implementation {
+impl Into<FilterProperty> for ImplementationType {
     fn into(self) -> FilterProperty {
-        FilterProperty::U32(self.bits())
+        FilterProperty::U32(self.bits() as u32)
     }
 }
 
@@ -351,7 +414,8 @@ bitflags! {
 }
 
 #[doc = " The mfxSkipMode enumerator describes the decoder skip-mode options."]
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 pub enum SkipMode {
     NoSkip = ffi::mfxSkipMode_MFX_SKIPMODE_NOSKIP,
     #[doc = " Do not skip any frames."]
@@ -361,7 +425,8 @@ pub enum SkipMode {
 }
 
 #[derive(Debug)]
-#[EnumRepr(type = "u32")]
+#[cfg_attr(target_os = "unix", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 pub enum ChromaFormat {
     #[doc = "< Monochrome or YUV400."]
     Monochrome = ffi::MFX_CHROMAFORMAT_MONOCHROME,

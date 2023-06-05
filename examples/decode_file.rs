@@ -1,8 +1,8 @@
 ///! This example decodes an hevc encoded file (tests/frozen.hevc) and produces a raw YUV 4:2:0 8 bit file at /tmp/output.yuv
-use std::io;
+use std::{env, io, path::PathBuf};
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{constants, bitstream::Bitstream, Loader};
+use onevpl::{bitstream::Bitstream, constants, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -13,7 +13,9 @@ pub async fn main() {
 
     // Open file to read from
     let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
-    let mut output = std::fs::File::create("/tmp/output.yuv").unwrap();
+    let mut output_path = PathBuf::from(env::temp_dir());
+    output_path.push("output.yuv");
+    let mut output = std::fs::File::create(output_path).unwrap();
 
     let mut loader = Loader::new().unwrap();
 
@@ -21,7 +23,7 @@ pub async fn main() {
     loader
         .set_filter_property(
             "mfxImplDescription.Impl",
-            constants::Implementation::SOFTWARE,
+            constants::ImplementationType::SOFTWARE,
             None,
         )
         .unwrap();

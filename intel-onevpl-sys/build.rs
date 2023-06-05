@@ -3,8 +3,18 @@ use std::{env, path::PathBuf};
 fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let lib_vpl_include_path = env::var("LIBVPL_INCLUDE_PATH");
+    let lib_vpl_library_path = env::var("LIBVPL_LIBRARY_PATH");
 
     println!("cargo:rustc-link-lib=dylib=vpl");
+    match lib_vpl_library_path {
+        Ok(path) => {
+            println!("cargo:rustc-link-search={path}");
+        }
+        _ => {
+            #[cfg(target_os = "windows")]
+            println!("cargo:rustc-link-search=C:/Program Files (x86)/Intel/oneAPI/vpl/latest/lib");
+        }
+    };
 
     let libvpl_include_path = match lib_vpl_include_path {
         Ok(path) => PathBuf::from(path),
@@ -17,10 +27,9 @@ fn main() {
                 libvpl.include_paths[0].join("vpl")
             }
             #[cfg(target_os = "windows")]
-            PathBuf::from("C:/Program Files (x86)/vpl/include/vpl/")
+            PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/include/vpl")
         }
     };
-    
 
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate

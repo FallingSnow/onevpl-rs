@@ -9,7 +9,7 @@ pub enum FilterProperty {
     Ptr(*mut std::ffi::c_void),
 }
 impl FilterProperty {
-    pub fn filter_type(&self) -> u32 {
+    pub fn filter_type(&self) -> ffi::mfxVariantType {
         match self {
             FilterProperty::I32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_I32,
             FilterProperty::U32(_) => ffi::mfxVariantType_MFX_VARIANT_TYPE_U32,

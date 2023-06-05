@@ -97,7 +97,7 @@ impl<'a> VideoProcessor<'a> {
         .unwrap()?;
 
         let frame_info = output_surface.inner.Info;
-        let format = FourCC::from_repr(frame_info.FourCC).unwrap();
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
 
@@ -220,7 +220,7 @@ pub struct VppVideoParams {
 
 impl VppVideoParams {
     pub fn fourcc(&self) -> FourCC {
-        FourCC::from_repr(self.out().FourCC).unwrap()
+        FourCC::from_repr(self.out().FourCC as ffi::_bindgen_ty_5).unwrap()
     }
 
     fn in_(&self) -> &ffi::mfxFrameInfo {
@@ -265,10 +265,10 @@ impl VppVideoParams {
     }
 
     pub fn in_picstruct(&self) -> PicStruct {
-        PicStruct::from_repr(self.in_().PicStruct as u32).unwrap()
+        PicStruct::from_repr(self.in_().PicStruct as ffi::_bindgen_ty_6).unwrap()
     }
     pub fn out_picstruct(&self) -> PicStruct {
-        PicStruct::from_repr(self.out().PicStruct as u32).unwrap()
+        PicStruct::from_repr(self.out().PicStruct as ffi::_bindgen_ty_6).unwrap()
     }
     pub fn set_in_picstruct(&mut self, format: PicStruct) {
         self.in_mut().PicStruct = format.repr() as u16;
@@ -285,10 +285,10 @@ impl VppVideoParams {
     }
 
     pub fn set_in_fourcc(&mut self, fourcc: FourCC) {
-        self.in_mut().FourCC = fourcc.repr();
+        self.in_mut().FourCC = fourcc.repr() as u32;
     }
     pub fn set_out_fourcc(&mut self, fourcc: FourCC) {
-        self.out_mut().FourCC = fourcc.repr();
+        self.out_mut().FourCC = fourcc.repr() as u32;
     }
 
     /// 23.97 FPS == numerator 24000, denominator = 1001
