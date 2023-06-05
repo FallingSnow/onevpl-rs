@@ -10,7 +10,7 @@ oneVPL is Intel's replacement for intel-media-sdk.
 - [x] Hardware Decode
 - [x] Simple Video Post/Pre Processing (VPP)
     - Color space conversion, Crop
-- [] Advanced Video Post/Pre Processing (VPP)
+- [ ] Advanced Video Post/Pre Processing (VPP)
     - Sharpening, Denoise, Rotate, etc.
 
 
