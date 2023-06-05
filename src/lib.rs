@@ -1,7 +1,6 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
-use std::path::PathBuf;
 use std::{
     io::{self, Write},
     mem,
@@ -88,15 +87,21 @@ impl Loader {
         config.set_filter_property(name, value, version)
     }
 
-    // TODO: Finish
-    // pub fn implementations(&mut self) {
+    // TODO: Finish, already works, just need to iterate over implementations and return them
+    // pub fn implementations(&mut self) -> Result<(), MfxStatus> {
+    // use std::ptr::null_mut;
+    //     let mut caps = null_mut();
     //     let lib = get_library().unwrap();
     //     let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
-    //     let config = unsafe { lib.MFXEnumImplementations(self.inner, 0, format, ) };
-    //     if config.is_null() {
-    //         return Err(MfxStatus::Unknown);
+    //     let status = unsafe { lib.MFXEnumImplementations(self.inner, 0, format.repr(), &mut caps) }.into();
+    //     if status != MfxStatus::NoneOrDone {
+    //         return Err(status);
     //     }
-    //     return Ok(Self { inner: config });
+    //     unsafe {
+    //         let a = mem::transmute::<*mut c_void, *const ffi::mfxImplDescription>(caps);
+    //         dbg!((*a).ImplName);
+    //     }
+    //     return Ok(());
     // }
 }
 
@@ -1039,11 +1044,11 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
         return Ok(vpl);
     }
 
-    #[cfg(target_os = "windows")]
-    let lib = unsafe { ffi::vpl::new(PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/bin/libvpl.dll")) }?;
-    #[cfg(target_os = "linux")]
+    // #[cfg(target_os = "windows")]
+    // let lib = unsafe { ffi::vpl::new(PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/bin/libvpl.dll")) }?;
+    // #[cfg(target_os = "linux")]
     let lib = {
-        let library_name = libloading::library_filename("vpl");
+        let library_name = libloading::library_filename("libvpl");
         let lib = unsafe { ffi::vpl::new(library_name) }?;
         lib
     };
