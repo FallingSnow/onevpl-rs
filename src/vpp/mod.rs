@@ -203,6 +203,30 @@ impl<'a> VideoProcessor<'a> {
 
         Ok(params)
     }
+
+    /// Verifies VPP support for specified parameters.
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-query
+    /// for more info.
+    pub fn query(session: &mut Session, input_params: Option<VppVideoParams>) -> Result<VppVideoParams, (MfxStatus, VppVideoParams)> {
+        let lib = get_library().unwrap();
+
+        let mut input_params = input_params.unwrap_or(VppVideoParams::default());
+
+        let mut params = VppVideoParams::default();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXVideoVPP_Query(session.inner, &mut **input_params, &mut **params) }.into();
+
+        trace!("VPP query = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err((status, params));
+        }
+
+        Ok(params)
+    }
 }
 
 impl<'a> Drop for VideoProcessor<'a> {
@@ -277,6 +301,12 @@ impl VppVideoParams {
         self.out_mut().PicStruct = format.repr() as u16;
     }
 
+    pub fn in_chroma_format(&self) -> ChromaFormat {
+        ChromaFormat::from_repr(self.in_().ChromaFormat as ffi::_bindgen_ty_7).unwrap()
+    }
+    pub fn out_chroma_format(&self) -> ChromaFormat {
+        ChromaFormat::from_repr(self.out().ChromaFormat as ffi::_bindgen_ty_7).unwrap()
+    }
     pub fn set_in_chroma_format(&mut self, format: ChromaFormat) {
         self.in_mut().ChromaFormat = format.repr() as u16;
     }
@@ -284,6 +314,12 @@ impl VppVideoParams {
         self.out_mut().ChromaFormat = format.repr() as u16;
     }
 
+    pub fn in_fourcc(&self) -> FourCC {
+        FourCC::from_repr(self.in_().FourCC as ffi::_bindgen_ty_5).unwrap()
+    }
+    pub fn out_fourcc(&self) -> FourCC {
+        FourCC::from_repr(self.out().FourCC as ffi::_bindgen_ty_5).unwrap()
+    }
     pub fn set_in_fourcc(&mut self, fourcc: FourCC) {
         self.in_mut().FourCC = fourcc.repr() as u32;
     }

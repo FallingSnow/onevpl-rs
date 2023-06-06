@@ -165,7 +165,7 @@ pub enum AccelerationMode {
     HDDLUNITE = ffi::mfxAccelerationMode_MFX_ACCEL_MODE_VIA_HDDLUNITE,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
 #[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
 pub enum PicStruct {
