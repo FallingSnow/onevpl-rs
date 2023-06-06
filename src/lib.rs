@@ -25,6 +25,7 @@ pub use videoparams::MfxVideoParams;
 use vpp::VideoProcessor;
 
 use crate::constants::{ChromaFormat, MemoryFlag};
+use crate::utils::str_from_null_terminated_utf8_i8;
 
 pub mod bitstream;
 pub mod constants;
@@ -88,21 +89,40 @@ impl Loader {
     }
 
     // TODO: Finish, already works, just need to iterate over implementations and return them
-    // pub fn implementations(&mut self) -> Result<(), MfxStatus> {
-    // use std::ptr::null_mut;
-    //     let mut caps = null_mut();
-    //     let lib = get_library().unwrap();
-    //     let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
-    //     let status = unsafe { lib.MFXEnumImplementations(self.inner, 0, format.repr(), &mut caps) }.into();
-    //     if status != MfxStatus::NoneOrDone {
-    //         return Err(status);
-    //     }
-    //     unsafe {
-    //         let a = mem::transmute::<*mut c_void, *const ffi::mfxImplDescription>(caps);
-    //         dbg!((*a).ImplName);
-    //     }
-    //     return Ok(());
-    // }
+    pub fn implementations(&mut self) -> Result<Vec<()>, MfxStatus> {
+        use std::ptr::null_mut;
+        let mut caps = null_mut();
+        let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
+        let mut i = 0;
+        let mut status = MfxStatus::NoneOrDone;
+        let mut implementations = Vec::new();
+
+        let lib = get_library().unwrap();
+
+        while status == MfxStatus::NoneOrDone {
+            status = unsafe { lib.MFXEnumImplementations(self.inner, i, format.repr(), &mut caps) }
+                .into();
+
+            if status == MfxStatus::NotFound {
+                break;
+            }
+            if status != MfxStatus::NoneOrDone {
+                return Err(status);
+            }
+            let raw_description = unsafe {
+                mem::transmute::<*mut c_void, *const ffi::mfxImplDescription>(caps)
+                    .as_ref()
+                    .unwrap()
+            };
+
+            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.ImplName) }.to_string());
+            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.License) }.to_string());
+            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.Keywords) }.to_string());
+            i += 1;
+        }
+
+        return Ok(implementations);
+    }
 }
 
 impl Deref for Loader {

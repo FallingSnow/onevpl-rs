@@ -1,3 +1,5 @@
+use std::ffi::CStr;
+
 use intel_onevpl_sys as ffi;
 
 use crate::constants::PicStruct;
@@ -53,11 +55,20 @@ pub fn align32(x: u16) -> u16 {
 pub fn hw_align_width(width: u16) -> u16 {
     align16(width)
 }
-    // Needs to be multiple of 32 when picstruct is not progressive
+
+// Needs to be multiple of 32 when picstruct is not progressive
 pub fn hw_align_height(height: u16, picstruct: PicStruct) -> u16 {
     if picstruct == PicStruct::Progressive {
         align16(height)
     } else {
         align32(height)
     }
+}
+
+pub(crate) unsafe fn str_from_null_terminated_utf8(s: &[u8]) -> &str {
+    CStr::from_ptr(s.as_ptr() as *const _).to_str().unwrap()
+}
+pub(crate) unsafe fn str_from_null_terminated_utf8_i8(s: &[i8]) -> &str {
+    let u = unsafe { &*(s as *const [i8] as *const [u8]) };
+    str_from_null_terminated_utf8(u)
 }
