@@ -87,9 +87,9 @@ pub async fn main() {
 
     // We need to use the VPP because when HW encoding only frames in HW formats are supported (Eg. YUV12 -> NV12)
     let mut vpp_params = VppVideoParams::default();
-    vpp_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
+    vpp_params.set_io_pattern(IoPattern::IN_SYSTEM_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
 
-    vpp_params.set_in_fourcc(FourCC::IyuvOrI420);
+    vpp_params.set_in_fourcc(FourCC::YV12);
     vpp_params.set_in_picstruct(input_frame_struct);
     vpp_params.set_in_height(hw_height);
     vpp_params.set_in_width(hw_width);
