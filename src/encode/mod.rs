@@ -40,14 +40,16 @@ impl EncodeCtrl {
 }
 
 #[derive(Debug)]
-pub struct Encoder<'a> {
-    session: &'a Session,
+pub struct Encoder<'a, 'b: 'a> {
+    session: &'a Session<'b>,
     suggested_buffer_size: usize,
 }
 
-impl<'a> Encoder<'a> {
+// unsafe impl Send for Encoder<'_, '_> {}
+
+impl<'a, 'b: 'a> Encoder<'a, 'b> {
     #[tracing::instrument]
-    pub fn new(session: &'a Session, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
+    pub fn new(session: &'a Session<'b>, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
@@ -130,7 +132,7 @@ impl<'a> Encoder<'a> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforencode
     /// for more info.
-    pub fn get_surface<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
+    pub fn get_surface<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
@@ -217,7 +219,7 @@ impl<'a> Encoder<'a> {
     }
 }
 
-impl<'a> Drop for Encoder<'a> {
+impl Drop for Encoder<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXVideoENCODE_Close(self.session.inner) };

@@ -27,14 +27,15 @@ use crate::{
 //     }
 // }
 
-pub struct VideoProcessor<'a> {
-    session: &'a Session,
+pub struct VideoProcessor<'a, 'b: 'a> {
+    session: &'a Session<'b>,
 }
+// unsafe impl Send for VideoProcessor<'_, '_> {}
 
-impl<'a> VideoProcessor<'a> {
+impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     #[tracing::instrument]
     pub(crate) fn new(
-        session: &'a Session,
+        session: &'a Session<'b>,
         params: &mut VppVideoParams,
     ) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
@@ -138,7 +139,7 @@ impl<'a> VideoProcessor<'a> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvpp
     /// for more info.
-    pub fn get_surface_input<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
+    pub fn get_surface_input<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
@@ -162,7 +163,7 @@ impl<'a> VideoProcessor<'a> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_mem.html?highlight=getsurfaceforencode#mfxmemory-getsurfaceforvppout
     /// for more info.
-    pub fn get_surface_output<'b: 'a>(&mut self) -> Result<FrameSurface<'b>, MfxStatus> {
+    pub fn get_surface_output<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
@@ -229,7 +230,7 @@ impl<'a> VideoProcessor<'a> {
     }
 }
 
-impl<'a> Drop for VideoProcessor<'a> {
+impl Drop for VideoProcessor<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXVideoVPP_Close(self.session.inner) };

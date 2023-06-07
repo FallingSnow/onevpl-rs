@@ -10,14 +10,14 @@ use crate::{
     get_library, FrameSurface, Session, videoparams::MfxVideoParams,
 };
 
-pub struct Decoder<'a> {
-    session: &'a Session,
+pub struct Decoder<'a: 'b, 'b> {
+    session: &'a Session<'b>,
 }
 
-impl<'a> Decoder<'a> {
+impl<'a: 'b, 'b> Decoder<'a, 'b> {
     #[tracing::instrument]
     pub fn new(
-        session: &'a Session,
+        session: &'a Session<'b>,
         mut params: MfxVideoParams,
     ) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
@@ -239,7 +239,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-impl<'a> Drop for Decoder<'a> {
+impl Drop for Decoder<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXVideoDECODE_Close(self.session.inner) };

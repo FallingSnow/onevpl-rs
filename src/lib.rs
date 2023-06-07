@@ -1,6 +1,7 @@
 use std::ffi::c_void;
 use std::fs::File;
-use std::io::{Read};
+use std::io::Read;
+use std::marker::PhantomData;
 use std::{
     io::{self, Write},
     mem,
@@ -45,6 +46,8 @@ pub struct Loader {
     inner: mfxLoader,
     accelerator: Option<AcceleratorHandle>,
 }
+// unsafe impl Send for Loader {}
+
 impl Loader {
     #[tracing::instrument]
     pub fn new() -> Result<Self, MfxStatus> {
@@ -65,7 +68,7 @@ impl Loader {
         Config::new(self)
     }
 
-    pub fn new_session(&mut self, index: mfxU32) -> Result<Session, MfxStatus> {
+    pub fn new_session<'a: 'b, 'b>(&'a mut self, index: mfxU32) -> Result<Session<'b>, MfxStatus> {
         Session::new(self, index)
     }
 
@@ -264,8 +267,7 @@ pub struct FrameSurfaceBounds {
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
-    buffer: Vec<u8>,
-    // backing_buffer: &'b [u8]
+    buffer: Vec<u8>
 }
 
 unsafe impl Send for FrameSurface<'_> {}
@@ -979,6 +981,7 @@ impl io::Read for FrameSurface<'_> {
 pub enum AcceleratorHandle {
     VAAPI((File, *mut c_void)),
 }
+// unsafe impl Send for AcceleratorHandle {}
 
 impl AcceleratorHandle {
     #[cfg(target_os = "linux")]
@@ -1042,14 +1045,16 @@ impl Drop for AcceleratorHandle {
 }
 
 #[derive(Debug)]
-pub struct Session {
+pub struct Session<'a> {
     inner: mfxSession,
     accelerator: Option<AcceleratorHandle>,
+    phantom: PhantomData<&'a mfxSession>,
 }
+// unsafe impl Send for Session<'_> {}
 
-impl Session {
+impl<'a> Session<'a> {
     #[tracing::instrument]
-    pub(crate) fn new(loader: &mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
+    pub(crate) fn new<'b: 'a>(loader: &'b mut Loader, index: mfxU32) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
         let mut session: mfxSession = unsafe { mem::zeroed() };
         let status: MfxStatus =
@@ -1062,6 +1067,7 @@ impl Session {
         let session = Self {
             inner: session,
             accelerator: None,
+            phantom: PhantomData
         };
 
         debug!("Created a new session");
@@ -1073,12 +1079,12 @@ impl Session {
     }
 
     // Get a new instances of a decoder tied to this session
-    pub fn decoder<'a: 'b, 'b>(&'a self, params: MfxVideoParams) -> Result<Decoder<'b>, MfxStatus> {
+    pub fn decoder(&self, params: MfxVideoParams) -> Result<Decoder, MfxStatus> {
         Decoder::new(self, params)
     }
 
     // Get a new instances of a encoder tied to this session
-    pub fn encoder<'a: 'b, 'b>(&'a self, params: MfxVideoParams) -> Result<Encoder<'b>, MfxStatus> {
+    pub fn encoder(&self, params: MfxVideoParams) -> Result<Encoder, MfxStatus> {
         Encoder::new(self, params)
     }
 
@@ -1086,7 +1092,7 @@ impl Session {
     pub fn video_processor(
         &self,
         params: &mut crate::vpp::VppVideoParams,
-    ) -> Result<VideoProcessor<'_>, MfxStatus> {
+    ) -> Result<VideoProcessor, MfxStatus> {
         VideoProcessor::new(self, params)
     }
 
@@ -1204,7 +1210,7 @@ impl Session {
     }
 }
 
-impl Drop for Session {
+impl Drop for Session<'_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXClose(self.inner) };
