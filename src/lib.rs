@@ -11,9 +11,10 @@ use bitstream::Bitstream;
 use constants::{ApiVersion, FourCC, ImplementationType, IoPattern};
 use decode::Decoder;
 use encode::Encoder;
+pub use ffi::MfxStatus;
 use ffi::{
     mfxConfig, mfxLoader, mfxSession, mfxStructVersion, mfxStructVersion__bindgen_ty_1, mfxU32,
-    mfxVariant, MfxStatus,
+    mfxVariant,
 };
 use intel_onevpl_sys as ffi;
 
@@ -31,10 +32,10 @@ pub mod bitstream;
 pub mod constants;
 pub mod decode;
 pub mod encode;
+mod tests;
 pub mod utils;
 mod videoparams;
 pub mod vpp;
-mod tests;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -134,12 +135,7 @@ impl Loader {
             true => constants::ImplementationType::HARDWARE,
             false => constants::ImplementationType::SOFTWARE,
         };
-        self
-            .set_filter_property(
-                "mfxImplDescription.Impl",
-                value,
-                None,
-            )
+        self.set_filter_property("mfxImplDescription.Impl", value, None)
             .unwrap();
     }
 }
@@ -638,7 +634,6 @@ impl<'a> FrameSurface<'a> {
     }
 
     fn read_bgra_frame(&mut self) -> Result<(), MfxStatus> {
-
         let b = self.b();
 
         b.copy_from_slice(&self.buffer);
@@ -738,7 +733,8 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
             return Err(MfxStatus::NullPtr);
         }
 
-        let format = FourCC::from_repr(unsafe { (*value).Info.FourCC }).unwrap();
+        let format =
+            FourCC::from_repr(unsafe { (*value).Info.FourCC } as ffi::_bindgen_ty_5).unwrap();
         let width = unsafe { (*value).Info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let height = unsafe { (*value).Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let frame_size = Self::frame_size(format, width, height);
