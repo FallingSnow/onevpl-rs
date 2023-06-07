@@ -83,7 +83,7 @@ pub async fn main() {
     // content. We will use the hardware video processor to convert this to yuv420
     // format.
     let mut vpp_params = VppVideoParams::from(&mfx_params);
-    vpp_params.set_io_pattern(constants::IoPattern::VIDEO_MEMORY);
+    vpp_params.set_io_pattern(constants::IoPattern::OUT_SYSTEM_MEMORY | constants::IoPattern::IN_VIDEO_MEMORY);
     vpp_params.set_out_fourcc(constants::FourCC::YV12);
 
     let decoder = session.decoder(mfx_params).unwrap();
