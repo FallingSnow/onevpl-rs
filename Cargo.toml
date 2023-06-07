@@ -26,3 +26,5 @@ members = ["intel-onevpl-sys"]
 rand = "0.8.5"
 tracing-subscriber = "0.3.16"
 tracing-test = "0.2.4"
+sha2 = "0.10.6"
+hex-literal = "0.4.1"

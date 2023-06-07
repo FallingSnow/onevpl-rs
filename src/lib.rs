@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::fs::File;
-use std::io::{ErrorKind, Read};
+use std::io::{Read};
 use std::{
     io::{self, Write},
     mem,
@@ -34,6 +34,7 @@ pub mod encode;
 pub mod utils;
 mod videoparams;
 pub mod vpp;
+mod tests;
 
 static LIBRARY: OnceCell<ffi::vpl> = OnceCell::new();
 
@@ -115,13 +116,31 @@ impl Loader {
                     .unwrap()
             };
 
-            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.ImplName) }.to_string());
+            dbg!(
+                unsafe { str_from_null_terminated_utf8_i8(&raw_description.ImplName) }.to_string()
+            );
             dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.License) }.to_string());
-            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.Keywords) }.to_string());
+            dbg!(
+                unsafe { str_from_null_terminated_utf8_i8(&raw_description.Keywords) }.to_string()
+            );
             i += 1;
         }
 
         return Ok(implementations);
+    }
+
+    pub fn use_hardware(&mut self, yes: bool) {
+        let value = match yes {
+            true => constants::ImplementationType::HARDWARE,
+            false => constants::ImplementationType::SOFTWARE,
+        };
+        self
+            .set_filter_property(
+                "mfxImplDescription.Impl",
+                value,
+                None,
+            )
+            .unwrap();
     }
 }
 
@@ -249,6 +268,7 @@ pub struct FrameSurfaceBounds {
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
+    buffer: Vec<u8>,
     // backing_buffer: &'b [u8]
 }
 
@@ -352,6 +372,59 @@ impl<'a> FrameSurface<'a> {
         }
     }
 
+    /// b(), g(), r(), and a() provide the buffer for the entire frame. So if you are reading a BGRA frame, you can read the entire frame into the slice returned by b().
+    pub fn b<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_5.B.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize,
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.B, length) }
+    }
+
+    pub fn g<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_4.G.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 1,
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_4.G, length) }
+    }
+
+    pub fn r<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(unsafe { !self.inner.Data.__bindgen_anon_3.R.is_null() });
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 2,
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_3.R, length) }
+    }
+
+    pub fn a<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
+        assert!(!self.inner.Data.A.is_null());
+
+        let pitch = unsafe { self.inner.Data.__bindgen_anon_2.PitchLow };
+        let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+
+        let length = match self.fourcc() {
+            FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 3,
+            _ => unimplemented!(),
+        };
+        unsafe { std::slice::from_raw_parts_mut(self.inner.Data.A, length) }
+    }
+
     /// Remember to take pitch into account when writing to
     pub fn y<'c, 'd: 'c>(&'c mut self) -> &'d mut [u8] {
         assert!(unsafe { !self.inner.Data.__bindgen_anon_3.Y.is_null() });
@@ -452,29 +525,27 @@ impl<'a> FrameSurface<'a> {
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.V, length) }
     }
 
-    fn read_iyuv_or_i420_frame<R: Read>(&mut self, source: &mut R) -> Result<(), MfxStatus> {
+    fn read_iyuv_or_i420_frame(&mut self) -> Result<(), MfxStatus> {
         let bounds = self.bounds();
-        let y = self.y();
-        let u = self.u();
-        let v = self.v();
         let crop_h = bounds.crop_height as usize;
         let crop_w = bounds.crop_width as usize;
         let pitch = bounds.pitch as usize;
+        let mut read_offset = 0;
+
+        let y = self.y();
+        let u = self.u();
+        let v = self.v();
 
         // Y plane
         {
             for i_h in 0..crop_h {
+                let source_offset = i_h * crop_w;
                 let offset = i_h * pitch;
-                let buffer = &mut y[offset..offset + crop_w];
-                source.read_exact(buffer).map_err(|e| {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        MfxStatus::MoreData
-                    } else {
-                        warn!("{:?}", e);
-                        MfxStatus::Unknown
-                    }
-                })?;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut y[offset..offset + crop_w];
+                target.copy_from_slice(source);
             }
+            read_offset += crop_h * crop_w;
         }
 
         // U plane
@@ -483,17 +554,13 @@ impl<'a> FrameSurface<'a> {
             let crop_h = crop_h / 2;
             let crop_w = crop_w / 2;
             for i_h in 0..crop_h {
+                let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let buffer = &mut u[offset..offset + crop_w];
-                source.read_exact(buffer).map_err(|e| {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        MfxStatus::MoreData
-                    } else {
-                        warn!("{:?}", e);
-                        MfxStatus::Unknown
-                    }
-                })?;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut u[offset..offset + crop_w];
+                target.copy_from_slice(source);
             }
+            read_offset += crop_h * crop_w;
         }
 
         // V plane
@@ -502,18 +569,79 @@ impl<'a> FrameSurface<'a> {
             let crop_h = crop_h / 2;
             let crop_w = crop_w / 2;
             for i_h in 0..crop_h {
+                let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let buffer = &mut v[offset..offset + crop_w];
-                source.read_exact(buffer).map_err(|e| {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        MfxStatus::MoreData
-                    } else {
-                        warn!("{:?}", e);
-                        MfxStatus::Unknown
-                    }
-                })?;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut v[offset..offset + crop_w];
+                target.copy_from_slice(source);
             }
+            // read_offset += crop_h * crop_w;
         }
+
+        Ok(())
+    }
+
+    fn read_yv12_frame(&mut self) -> Result<(), MfxStatus> {
+        let bounds = self.bounds();
+        let crop_h = bounds.crop_height as usize;
+        let crop_w = bounds.crop_width as usize;
+        let pitch = bounds.pitch as usize;
+        let mut read_offset = 0;
+
+        let y = self.y();
+        let u = self.u();
+        let v = self.v();
+
+        // Y plane
+        {
+            for i_h in 0..crop_h {
+                let source_offset = i_h * crop_w;
+                let offset = i_h * pitch;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut y[offset..offset + crop_w];
+                target.copy_from_slice(source);
+            }
+            read_offset += crop_h * crop_w;
+        }
+
+        // V plane
+        {
+            let pitch = pitch / 2;
+            let crop_h = crop_h / 2;
+            let crop_w = crop_w / 2;
+            for i_h in 0..crop_h {
+                let source_offset = read_offset + i_h * crop_w;
+                let offset = i_h * pitch;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut v[offset..offset + crop_w];
+                target.copy_from_slice(source);
+            }
+            read_offset += crop_h * crop_w;
+        }
+
+        // U plane
+        {
+            let pitch = pitch / 2;
+            let crop_h = crop_h / 2;
+            let crop_w = crop_w / 2;
+            for i_h in 0..crop_h {
+                let source_offset = read_offset + i_h * crop_w;
+                let offset = i_h * pitch;
+                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let target = &mut u[offset..offset + crop_w];
+                target.copy_from_slice(source);
+            }
+            // read_offset += crop_h * crop_w;
+        }
+
+        Ok(())
+    }
+
+    fn read_bgra_frame(&mut self) -> Result<(), MfxStatus> {
+
+        let b = self.b();
+
+        b.copy_from_slice(&self.buffer);
 
         Ok(())
     }
@@ -525,15 +653,27 @@ impl<'a> FrameSurface<'a> {
         format: FourCC,
     ) -> Result<(), MfxStatus> {
         self.map(MemoryFlag::WRITE).unwrap();
+
+        match source.read_exact(&mut self.buffer) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(MfxStatus::MoreData);
+            }
+            Err(e) => {
+                warn!("{}", e);
+                return Err(MfxStatus::Unknown);
+            }
+        };
+
         let mut read_func = || match format {
             FourCC::NV12 => todo!(),
-            FourCC::YV12 => todo!(),
+            FourCC::YV12 => self.read_yv12_frame(),
             FourCC::NV16 => todo!(),
             FourCC::YUY2 => todo!(),
             FourCC::RGB565 => todo!(),
             FourCC::RGBP => todo!(),
             FourCC::RGB3 => todo!(),
-            FourCC::Rgb4OrBgra => todo!(),
+            FourCC::Rgb4OrBgra => self.read_bgra_frame(),
             FourCC::P8 => todo!(),
             FourCC::P8Texture => todo!(),
             FourCC::P010 => todo!(),
@@ -552,7 +692,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::Y216 => todo!(),
             FourCC::Y416 => todo!(),
             FourCC::NV21 => todo!(),
-            FourCC::IyuvOrI420 => self.read_iyuv_or_i420_frame(source),
+            FourCC::IyuvOrI420 => self.read_iyuv_or_i420_frame(),
             FourCC::I010 => todo!(),
             FourCC::I210 => todo!(),
             FourCC::I422 => todo!(),
@@ -564,6 +704,16 @@ impl<'a> FrameSurface<'a> {
         self.unmap().unwrap();
 
         result
+    }
+
+    pub fn frame_size(format: FourCC, width: u16, height: u16) -> usize {
+        match format {
+            FourCC::IyuvOrI420 | FourCC::NV12 | FourCC::YV12 => {
+                width as usize * height as usize * 3 / 2
+            }
+            FourCC::Rgb4OrBgra => width as usize * height as usize * 4,
+            _ => todo!(),
+        }
     }
 
     pub fn pitch_high(&self) -> u16 {
@@ -587,10 +737,16 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
         if value.is_null() {
             return Err(MfxStatus::NullPtr);
         }
+
+        let format = FourCC::from_repr(unsafe { (*value).Info.FourCC }).unwrap();
+        let width = unsafe { (*value).Info.__bindgen_anon_1.__bindgen_anon_1.CropW };
+        let height = unsafe { (*value).Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+        let frame_size = Self::frame_size(format, width, height);
+
         let frame_surface = Self {
             inner: unsafe { value.as_mut().unwrap() },
             read_offset: 0,
-            // backing_surface: None,
+            buffer: vec![0u8; frame_size], // backing_surface: None,
         };
 
         // If timestamp is 0 set it to unknown
@@ -1084,7 +1240,7 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
 }
 
 #[cfg(test)]
-mod tests {
+mod functional_tests {
     use crate::constants::{ApiVersion, Codec, ImplementationType};
 
     use super::*;

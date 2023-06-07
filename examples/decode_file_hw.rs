@@ -33,13 +33,7 @@ pub async fn main() {
 
     // Method 1: Intel API handles hardware selection
     // Set hardware decoding
-    loader
-        .set_filter_property(
-            "mfxImplDescription.Impl",
-            constants::ImplementationType::HARDWARE,
-            None,
-        )
-        .unwrap();
+    loader.use_hardware(true);
 
     // Set decode HEVC
     loader

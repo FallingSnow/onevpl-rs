@@ -1,28 +1,21 @@
-use std::{
-    env,
-    path::PathBuf,
-};
+use std::{env, path::PathBuf};
 
-use intel_onevpl_sys::MfxStatus;
-use onevpl::{
+use crate::{
     constants::{self, FourCC, IoPattern},
     utils::{hw_align_height, hw_align_width},
     vpp::VppVideoParams,
     Loader,
 };
+use intel_onevpl_sys::MfxStatus;
 
-#[tokio::main]
-pub async fn main() {
-    // Setup basic logger
-    tracing_subscriber::fmt::init();
-
+async fn vpp_file() -> PathBuf {
     // Open file to read from
     let mut input = std::fs::File::open("tests/frozen180.yuv").unwrap();
 
     // Create output file
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output-nv12.yuv");
-    let mut output = std::fs::File::create(output_path).unwrap();
+    let mut output = std::fs::File::create(output_path.as_path()).unwrap();
 
     // Define some input parameters
     let width = 320;
@@ -82,4 +75,22 @@ pub async fn main() {
         let bytes_copied = std::io::copy(&mut vpp_frame, &mut output).unwrap();
         assert_ne!(bytes_copied, 0);
     }
+
+    output_path
+}
+
+#[tokio::test]
+async fn test_vpp_file() {
+    use sha2::Digest;
+    let output_path = vpp_file().await;
+    let mut hasher = sha2::Sha256::new();
+    let mut file = std::fs::File::open(output_path).unwrap();
+
+    std::io::copy(&mut file, &mut hasher).unwrap();
+    let hash_bytes = hasher.finalize();
+
+    assert_eq!(
+        hash_bytes[..],
+        hex_literal::hex!("782135cbab50e1c38b2e308e856f2d98953c7db5ed18274b54095320f18d2a02")
+    );
 }

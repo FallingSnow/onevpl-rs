@@ -13,6 +13,7 @@ oneVPL is Intel's replacement for intel-media-sdk.
     - Color space conversion, Crop
 - [ ] Advanced Video Post/Pre Processing (VPP)
     - Sharpening, Denoise, Rotate, etc.
+- [ ] Copy-free (Use your own buffers)
 
 ## Dependencies
 Building bindings requires clang to be installed.

@@ -1,5 +1,5 @@
 ///! This example encodes a yuv file (tests/frozen180.yuv) and produces a HEVC YUV 4:2:0 8 bit file at /tmp/output.hevc
-use std::{io::{BufRead, ErrorKind}, path::PathBuf, env};
+use std::{path::PathBuf, env};
 
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{
@@ -15,8 +15,7 @@ pub async fn main() {
     tracing_subscriber::fmt::init();
 
     // Open file to read from
-    let file = std::fs::File::open("tests/frozen180.yuv").unwrap();
-    let mut reader = std::io::BufReader::with_capacity(122880, file);
+    let mut file = std::fs::File::open("tests/frozen180.yuv").unwrap();
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output.hevc");
     let mut output = std::fs::File::create(output_path).unwrap();
@@ -30,14 +29,8 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
 
-    // Set software decoding
-    loader
-        .set_filter_property(
-            "mfxImplDescription.Impl",
-            constants::ImplementationType::HARDWARE,
-            None,
-        )
-        .unwrap();
+    // Set hardware decoding
+    loader.use_hardware(true);
 
     // Set decode HEVC
     loader
@@ -111,18 +104,11 @@ pub async fn main() {
     let mut bitstream = Bitstream::with_codec(&mut buffer, codec);
 
     loop {
-        // Try to fill out read buffer, if end of file then break
-        if let Err(e) = reader.fill_buf() {
-            if e.kind() != ErrorKind::UnexpectedEof {
-                panic!("{:?}", e);
-            }
-        };
-
         // Gives you additional per frame encoder controls that we won't use in this example
         let mut ctrl = EncodeCtrl::new();
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_raw_frame(&mut reader, constants::FourCC::IyuvOrI420) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420) {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

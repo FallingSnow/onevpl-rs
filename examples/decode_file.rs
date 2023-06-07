@@ -20,13 +20,7 @@ pub async fn main() {
     let mut loader = Loader::new().unwrap();
 
     // Set software decoding
-    loader
-        .set_filter_property(
-            "mfxImplDescription.Impl",
-            constants::ImplementationType::SOFTWARE,
-            None,
-        )
-        .unwrap();
+    loader.use_hardware(false);
 
     // Set decode HEVC
     loader
