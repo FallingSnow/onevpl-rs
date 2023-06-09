@@ -1,9 +1,12 @@
 use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
-use tokio::task;
 use std::{mem, time::Instant};
+use tokio::task;
 use tracing::{debug, trace};
 
+pub use crate::videoparams::{
+    ExtraCodingOption, ExtraCodingOption1, ExtraCodingOption2, ExtraCodingOption3,
+};
 use crate::{
     bitstream::Bitstream,
     constants::{FrameType, NalUnitType, SkipFrame},
@@ -18,6 +21,7 @@ pub type EncodeStat = ffi::mfxEncodeStat;
 pub struct EncodeCtrl {
     inner: ffi::mfxEncodeCtrl,
 }
+unsafe impl Send for EncodeCtrl {}
 
 impl EncodeCtrl {
     pub fn new() -> Self {
@@ -35,7 +39,7 @@ impl EncodeCtrl {
         self.inner.QP = qp;
     }
     pub fn set_frame_type(&mut self, type_: FrameType) {
-        self.inner.FrameType = type_ as u16;
+        self.inner.FrameType = type_.bits() as u16;
     }
 }
 
@@ -51,16 +55,16 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
     #[tracing::instrument]
     pub fn new(session: &'a Session<'b>, mut params: MfxVideoParams) -> Result<Self, MfxStatus> {
         let lib = get_library().unwrap();
+        let session_inner = session.inner.0;
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_Init(session.inner, &mut **params) }.into();
+            unsafe { lib.MFXVideoENCODE_Init(session_inner, &mut **params) }.into();
 
         trace!("Encode init = {:?}", status);
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
-
 
         let mut encoder = Self {
             session,
@@ -88,6 +92,7 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
         timeout: Option<u32>,
     ) -> Result<usize, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
         let encode_start = Instant::now();
         let buffer_start_size = output.size();
 
@@ -99,13 +104,15 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
             );
         }
 
-        let surface = input.as_mut().map_or(std::ptr::null_mut(), |s| s.inner);
+        let surface = input
+            .as_mut()
+            .map_or(std::ptr::null_mut(), |s| s.inner as *mut _);
 
         let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
 
         let status: MfxStatus = unsafe {
             lib.MFXVideoENCODE_EncodeFrameAsync(
-                self.session.inner,
+                session,
                 &mut controller.inner,
                 surface,
                 &mut output.inner,
@@ -120,6 +127,7 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
         }
 
         task::block_in_place(|| self.session.sync(sync_point, timeout))?;
+        // dbg!(unsafe {output.inner.__bindgen_anon_1.__bindgen_anon_1.NumExtParam});
 
         trace!("Encoded frame: {:?}", encode_start.elapsed());
 
@@ -134,12 +142,12 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
     /// for more info.
     pub fn get_surface<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
 
         let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForEncode(self.session.inner, &mut raw_surface) }
-                .into();
+            unsafe { lib.MFXMemory_GetSurfaceForEncode(session, &mut raw_surface) }.into();
 
         trace!("Encode get surface = {:?}", status);
 
@@ -157,9 +165,9 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-reset for more info.
     pub fn reset(&mut self, mut params: MfxVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_Reset(self.session.inner, &mut **params) }.into();
+        let status: MfxStatus = unsafe { lib.MFXVideoENCODE_Reset(session, &mut **params) }.into();
 
         trace!("Decode reset = {:?}", status);
 
@@ -178,6 +186,7 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-getencodestat for more info.
     pub fn stats(&mut self) -> Result<EncodeStat, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut stats = EncodeStat {
             reserved: [0; 16],
@@ -187,7 +196,7 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
         };
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_GetEncodeStat(self.session.inner, &mut stats) }.into();
+            unsafe { lib.MFXVideoENCODE_GetEncodeStat(session, &mut stats) }.into();
 
         trace!("Encode reset = {:?}", status);
 
@@ -203,11 +212,12 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-getvideoparam for more info.
     pub fn params(&self) -> Result<MfxVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut params = MfxVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoENCODE_GetVideoParam(self.session.inner, &mut **params) }.into();
+            unsafe { lib.MFXVideoENCODE_GetVideoParam(session, &mut **params) }.into();
 
         trace!("Encode get params = {:?}", status);
 
@@ -222,6 +232,7 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
 impl Drop for Encoder<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
-        unsafe { lib.MFXVideoENCODE_Close(self.session.inner) };
+        let session = self.session.inner.0;
+        unsafe { lib.MFXVideoENCODE_Close(session) };
     }
 }

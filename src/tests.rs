@@ -63,7 +63,7 @@ async fn vpp_file() -> PathBuf {
         // Gives you additional per frame encoder controls that we won't use in this example
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_raw_frame(&mut input, constants::FourCC::IyuvOrI420) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut input, constants::FourCC::IyuvOrI420).await {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

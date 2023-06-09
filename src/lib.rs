@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::{
     io::{self, Write},
     mem,
@@ -20,9 +21,11 @@ use ffi::{
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
+use tokio::sync::Mutex;
 #[cfg(target_os = "linux")]
 use tracing::error;
 use tracing::{debug, trace, warn};
+use utils::SharedPtr;
 pub use videoparams::MfxVideoParams;
 use vpp::VideoProcessor;
 
@@ -46,7 +49,7 @@ pub struct Loader {
     inner: mfxLoader,
     accelerator: Option<AcceleratorHandle>,
 }
-// unsafe impl Send for Loader {}
+unsafe impl Send for Loader {}
 
 impl Loader {
     #[tracing::instrument]
@@ -56,12 +59,24 @@ impl Loader {
         if loader.is_null() {
             return Err(MfxStatus::Unknown);
         }
-        debug!("New loader created");
 
-        Ok(Self {
+        let mut loader = Self {
             inner: loader,
             accelerator: None,
-        })
+        };
+
+        debug!("New loader created");
+
+        // Set required API version to 2.2
+        loader
+            .set_filter_property(
+                "mfxImplDescription.ApiVersion.Version",
+                constants::ApiVersion::new(2, 2),
+                None,
+            )
+            .unwrap();
+
+        Ok(loader)
     }
 
     pub fn new_config(&mut self) -> Result<Config, MfxStatus> {
@@ -267,7 +282,7 @@ pub struct FrameSurfaceBounds {
 pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
-    buffer: Vec<u8>
+    buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 unsafe impl Send for FrameSurface<'_> {}
@@ -523,7 +538,7 @@ impl<'a> FrameSurface<'a> {
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.V, length) }
     }
 
-    fn read_iyuv_or_i420_frame(&mut self) -> Result<(), MfxStatus> {
+    async fn read_iyuv_or_i420_frame(&mut self) -> Result<(), MfxStatus> {
         let bounds = self.bounds();
         let crop_h = bounds.crop_height as usize;
         let crop_w = bounds.crop_width as usize;
@@ -533,13 +548,14 @@ impl<'a> FrameSurface<'a> {
         let y = self.y();
         let u = self.u();
         let v = self.v();
+        let buffer = self.buffer.lock().await;
 
         // Y plane
         {
             for i_h in 0..crop_h {
                 let source_offset = i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut y[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -554,7 +570,7 @@ impl<'a> FrameSurface<'a> {
             for i_h in 0..crop_h {
                 let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut u[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -569,7 +585,7 @@ impl<'a> FrameSurface<'a> {
             for i_h in 0..crop_h {
                 let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut v[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -579,7 +595,7 @@ impl<'a> FrameSurface<'a> {
         Ok(())
     }
 
-    fn read_yv12_frame(&mut self) -> Result<(), MfxStatus> {
+    async fn read_yv12_frame(&mut self) -> Result<(), MfxStatus> {
         let bounds = self.bounds();
         let crop_h = bounds.crop_height as usize;
         let crop_w = bounds.crop_width as usize;
@@ -589,13 +605,14 @@ impl<'a> FrameSurface<'a> {
         let y = self.y();
         let u = self.u();
         let v = self.v();
+        let buffer = self.buffer.lock().await;
 
         // Y plane
         {
             for i_h in 0..crop_h {
                 let source_offset = i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut y[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -610,7 +627,7 @@ impl<'a> FrameSurface<'a> {
             for i_h in 0..crop_h {
                 let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut v[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -625,7 +642,7 @@ impl<'a> FrameSurface<'a> {
             for i_h in 0..crop_h {
                 let source_offset = read_offset + i_h * crop_w;
                 let offset = i_h * pitch;
-                let source = &self.buffer[source_offset..source_offset + crop_w];
+                let source = &buffer[source_offset..source_offset + crop_w];
                 let target = &mut u[offset..offset + crop_w];
                 target.copy_from_slice(source);
             }
@@ -635,23 +652,23 @@ impl<'a> FrameSurface<'a> {
         Ok(())
     }
 
-    fn read_bgra_frame(&mut self) -> Result<(), MfxStatus> {
+    async fn read_bgra_frame(&mut self) -> Result<(), MfxStatus> {
         let b = self.b();
 
-        b.copy_from_slice(&self.buffer);
+        b.copy_from_slice(&self.buffer.lock().await);
 
         Ok(())
     }
 
     /// Reads a single frame in the given pixel format. Unfortunately you need to pass the width and height of the frame because the frame's internal size is unreliable.
-    pub fn read_raw_frame<R: Read>(
+    pub async fn read_raw_frame<R: Read>(
         &mut self,
         source: &mut R,
         format: FourCC,
     ) -> Result<(), MfxStatus> {
         self.map(MemoryFlag::WRITE).unwrap();
 
-        match source.read_exact(&mut self.buffer) {
+        match source.read_exact(&mut self.buffer.lock().await) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 return Err(MfxStatus::MoreData);
@@ -662,41 +679,43 @@ impl<'a> FrameSurface<'a> {
             }
         };
 
-        let mut read_func = || match format {
-            FourCC::NV12 => todo!(),
-            FourCC::YV12 => self.read_yv12_frame(),
-            FourCC::NV16 => todo!(),
-            FourCC::YUY2 => todo!(),
-            FourCC::RGB565 => todo!(),
-            FourCC::RGBP => todo!(),
-            FourCC::RGB3 => todo!(),
-            FourCC::Rgb4OrBgra => self.read_bgra_frame(),
-            FourCC::P8 => todo!(),
-            FourCC::P8Texture => todo!(),
-            FourCC::P010 => todo!(),
-            FourCC::P016 => todo!(),
-            FourCC::P210 => todo!(),
-            FourCC::BGR4 => todo!(),
-            FourCC::A2RGB10 => todo!(),
-            FourCC::ARGB16 => todo!(),
-            FourCC::ABGR16 => todo!(),
-            FourCC::R16 => todo!(),
-            FourCC::AYUV => todo!(),
-            FourCC::AyuvRgb4 => todo!(),
-            FourCC::UYVY => todo!(),
-            FourCC::Y210 => todo!(),
-            FourCC::Y410 => todo!(),
-            FourCC::Y216 => todo!(),
-            FourCC::Y416 => todo!(),
-            FourCC::NV21 => todo!(),
-            FourCC::IyuvOrI420 => self.read_iyuv_or_i420_frame(),
-            FourCC::I010 => todo!(),
-            FourCC::I210 => todo!(),
-            FourCC::I422 => todo!(),
-            FourCC::BGRP => todo!(),
+        let read_func = async {
+            match format {
+                FourCC::NV12 => todo!(),
+                FourCC::YV12 => self.read_yv12_frame().await,
+                FourCC::NV16 => todo!(),
+                FourCC::YUY2 => todo!(),
+                FourCC::RGB565 => todo!(),
+                FourCC::RGBP => todo!(),
+                FourCC::RGB3 => todo!(),
+                FourCC::Rgb4OrBgra => self.read_bgra_frame().await,
+                FourCC::P8 => todo!(),
+                FourCC::P8Texture => todo!(),
+                FourCC::P010 => todo!(),
+                FourCC::P016 => todo!(),
+                FourCC::P210 => todo!(),
+                FourCC::BGR4 => todo!(),
+                FourCC::A2RGB10 => todo!(),
+                FourCC::ARGB16 => todo!(),
+                FourCC::ABGR16 => todo!(),
+                FourCC::R16 => todo!(),
+                FourCC::AYUV => todo!(),
+                FourCC::AyuvRgb4 => todo!(),
+                FourCC::UYVY => todo!(),
+                FourCC::Y210 => todo!(),
+                FourCC::Y410 => todo!(),
+                FourCC::Y216 => todo!(),
+                FourCC::Y416 => todo!(),
+                FourCC::NV21 => todo!(),
+                FourCC::IyuvOrI420 => self.read_iyuv_or_i420_frame().await,
+                FourCC::I010 => todo!(),
+                FourCC::I210 => todo!(),
+                FourCC::I422 => todo!(),
+                FourCC::BGRP => todo!(),
+            }
         };
 
-        let result: Result<(), MfxStatus> = read_func();
+        let result: Result<(), MfxStatus> = read_func.await;
 
         self.unmap().unwrap();
 
@@ -741,10 +760,10 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
         let height = unsafe { (*value).Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let frame_size = Self::frame_size(format, width, height);
 
-        let frame_surface = Self {
+        let mut frame_surface = Self {
             inner: unsafe { value.as_mut().unwrap() },
             read_offset: 0,
-            buffer: vec![0u8; frame_size], // backing_surface: None,
+            buffer: Arc::new(Mutex::new(vec![0u8; frame_size])),
         };
 
         // If timestamp is 0 set it to unknown
@@ -981,7 +1000,7 @@ impl io::Read for FrameSurface<'_> {
 pub enum AcceleratorHandle {
     VAAPI((File, *mut c_void)),
 }
-// unsafe impl Send for AcceleratorHandle {}
+unsafe impl Send for AcceleratorHandle {}
 
 impl AcceleratorHandle {
     #[cfg(target_os = "linux")]
@@ -1046,11 +1065,12 @@ impl Drop for AcceleratorHandle {
 
 #[derive(Debug)]
 pub struct Session<'a> {
-    inner: mfxSession,
+    inner: SharedPtr<mfxSession>,
     accelerator: Option<AcceleratorHandle>,
     phantom: PhantomData<&'a mfxSession>,
 }
-// unsafe impl Send for Session<'_> {}
+unsafe impl Send for Session<'_> {}
+unsafe impl Sync for Session<'_> {}
 
 impl<'a> Session<'a> {
     #[tracing::instrument]
@@ -1065,9 +1085,9 @@ impl<'a> Session<'a> {
         }
 
         let session = Self {
-            inner: session,
+            inner: SharedPtr(session),
             accelerator: None,
-            phantom: PhantomData
+            phantom: PhantomData,
         };
 
         debug!("Created a new session");
@@ -1109,7 +1129,7 @@ impl<'a> Session<'a> {
         params.set_io_pattern(io_pattern);
 
         let status: MfxStatus = unsafe {
-            lib.MFXVideoDECODE_DecodeHeader(self.inner, &mut bitstream.inner, &mut **params)
+            lib.MFXVideoDECODE_DecodeHeader(self.inner.0, &mut bitstream.inner, &mut **params)
         }
         .into();
 
@@ -1145,7 +1165,8 @@ impl<'a> Session<'a> {
 
         let mut implementation = 0i32;
 
-        let status: MfxStatus = unsafe { lib.MFXQueryIMPL(self.inner, &mut implementation) }.into();
+        let status: MfxStatus =
+            unsafe { lib.MFXQueryIMPL(self.inner.0, &mut implementation) }.into();
 
         trace!("Session implementation = {:?}", status);
 
@@ -1164,7 +1185,7 @@ impl<'a> Session<'a> {
 
         let mut version: ffi::mfxVersion = unsafe { mem::zeroed() };
 
-        let status = unsafe { lib.MFXQueryVersion(self.inner, &mut version) }.into();
+        let status = unsafe { lib.MFXQueryVersion(self.inner.0, &mut version) }.into();
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -1178,9 +1199,10 @@ impl<'a> Session<'a> {
     /// You should probably be setting the accelerator on the loader then creating a session.
     pub fn set_accelerator(&mut self, handle: AcceleratorHandle) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
-        let status =
-            unsafe { lib.MFXVideoCORE_SetHandle(self.inner, handle.mfx_type(), *handle.handle()) }
-                .into();
+        let status = unsafe {
+            lib.MFXVideoCORE_SetHandle(self.inner.0, handle.mfx_type(), *handle.handle())
+        }
+        .into();
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -1198,9 +1220,10 @@ impl<'a> Session<'a> {
         wait: Option<u32>,
     ) -> Result<MfxStatus, MfxStatus> {
         let lib = get_library().unwrap();
-        let status =
-            unsafe { lib.MFXVideoCORE_SyncOperation(self.inner, sync_point, wait.unwrap_or(1000)) }
-                .into();
+        let status = unsafe {
+            lib.MFXVideoCORE_SyncOperation(self.inner.0, sync_point, wait.unwrap_or(1000))
+        }
+        .into();
 
         match status {
             MfxStatus::NoneOrDone => Ok(status),
@@ -1213,7 +1236,7 @@ impl<'a> Session<'a> {
 impl Drop for Session<'_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
-        unsafe { lib.MFXClose(self.inner) };
+        unsafe { lib.MFXClose(self.inner.0) };
     }
 }
 

@@ -21,37 +21,36 @@ pub enum SkipFrame {
     BrcOnly = ffi::MFX_SKIPFRAME_BRC_ONLY,
 }
 
-#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
-#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
-#[derive(Debug, Clone, Copy)]
-#[doc = " The FrameType enumerator itemizes frame types. Use bit-ORed values to specify all that apply."]
-pub enum FrameType {
-    #[doc = "< Frame type is unspecified."]
-    Unknown = ffi::MFX_FRAMETYPE_UNKNOWN,
-    #[doc = "< This frame or the first field is encoded as an I-frame/field."]
-    I = ffi::MFX_FRAMETYPE_I,
-    #[doc = "< This frame or the first field is encoded as an P-frame/field."]
-    P = ffi::MFX_FRAMETYPE_P,
-    #[doc = "< This frame or the first field is encoded as an B-frame/field."]
-    B = ffi::MFX_FRAMETYPE_B,
-    #[doc = "< This frame or the first field is either an SI- or SP-frame/field."]
-    S = ffi::MFX_FRAMETYPE_S,
-    #[doc = "< This frame or the first field is encoded as a reference."]
-    Ref = ffi::MFX_FRAMETYPE_REF,
-    #[doc = "< This frame or the first field is encoded as an IDR."]
-    Idr = ffi::MFX_FRAMETYPE_IDR,
-    #[doc = "< The second field is encoded as an I-field."]
-    XI = ffi::MFX_FRAMETYPE_xI,
-    #[doc = "< The second field is encoded as an P-field."]
-    XP = ffi::MFX_FRAMETYPE_xP,
-    #[doc = "< The second field is encoded as an S-field."]
-    XB = ffi::MFX_FRAMETYPE_xB,
-    #[doc = "< The second field is an SI- or SP-field."]
-    XS = ffi::MFX_FRAMETYPE_xS,
-    #[doc = "< The second field is encoded as a reference."]
-    XRef = ffi::MFX_FRAMETYPE_xREF,
-    #[doc = "< The second field is encoded as an IDR."]
-    XIdr = ffi::MFX_FRAMETYPE_xIDR,
+bitflags! {
+    #[doc = " The FrameType enumerator itemizes frame types. Use bit-ORed values to specify all that apply."]
+    pub struct FrameType: ffi::_bindgen_ty_37 {
+        #[doc = "< Frame type is unspecified."]
+        const UNKNOWN = ffi::MFX_FRAMETYPE_UNKNOWN;
+        #[doc = "< This frame or the first field is encoded as an I-frame/field."]
+        const I = ffi::MFX_FRAMETYPE_I;
+        #[doc = "< This frame or the first field is encoded as an P-frame/field."]
+        const P = ffi::MFX_FRAMETYPE_P;
+        #[doc = "< This frame or the first field is encoded as an B-frame/field."]
+        const B = ffi::MFX_FRAMETYPE_B;
+        #[doc = "< This frame or the first field is either an SI- or SP-frame/field."]
+        const S = ffi::MFX_FRAMETYPE_S;
+        #[doc = "< This frame or the first field is encoded as a reference."]
+        const REF = ffi::MFX_FRAMETYPE_REF;
+        #[doc = "< This frame or the first field is encoded as an IDR."]
+        const IDR = ffi::MFX_FRAMETYPE_IDR;
+        #[doc = "< The second field is encoded as an I-field."]
+        const XI = ffi::MFX_FRAMETYPE_xI;
+        #[doc = "< The second field is encoded as an P-field."]
+        const XP = ffi::MFX_FRAMETYPE_xP;
+        #[doc = "< The second field is encoded as an S-field."]
+        const XB = ffi::MFX_FRAMETYPE_xB;
+        #[doc = "< The second field is an SI- or SP-field."]
+        const XS = ffi::MFX_FRAMETYPE_xS;
+        #[doc = "< The second field is encoded as a reference."]
+        const XREF = ffi::MFX_FRAMETYPE_xREF;
+        #[doc = "< The second field is encoded as an IDR."]
+        const XIDR = ffi::MFX_FRAMETYPE_xIDR;
+    }
 }
 
 #[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
@@ -442,4 +441,58 @@ pub enum ChromaFormat {
     YUV422V = ffi::MFX_CHROMAFORMAT_YUV422V,
     #[doc = "< Reserved."]
     Reserved1 = ffi::MFX_CHROMAFORMAT_RESERVED1,
+}
+
+#[derive(Debug)]
+#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[doc = " The CodingOptionValue enumerator defines a three-state coding option setting."]
+pub enum CodingOptionValue {
+    #[doc = "< Unspecified."]
+    Unkown = ffi::MFX_CODINGOPTION_UNKNOWN,
+    #[doc = "< Coding option set."]
+    On = ffi::MFX_CODINGOPTION_ON,
+    #[doc = "< Coding option not set."]
+    Off = ffi::MFX_CODINGOPTION_OFF,
+    #[doc = "< Reserved."]
+    Adaptive = ffi::MFX_CODINGOPTION_ADAPTIVE,
+}
+
+#[derive(Debug)]
+#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[doc = " The BRefControl enumerator is used to control usage of B-frames as reference in AVC encoder."]
+pub enum BRefControl {
+    #[doc = "< Default value, it is up to the encoder to use B-frames as reference."]
+    Unknown = ffi::MFX_B_REF_UNKNOWN,
+    #[doc = "< Do not use B-frames as reference."]
+    Off = ffi::MFX_B_REF_OFF,
+    #[doc = "< Arrange B-frames in so-called \"B pyramid\" reference structure."]
+    Pyramid = ffi::MFX_B_REF_PYRAMID,
+}
+
+#[derive(Debug)]
+#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[doc = " The ScenarioInfo enumerator itemizes scenarios for the encoding session."]
+pub enum ScenarioInfo {
+    Unknown = ffi::MFX_SCENARIO_UNKNOWN,
+    DisplayRemoting = ffi::MFX_SCENARIO_DISPLAY_REMOTING,
+    VideoConference = ffi::MFX_SCENARIO_VIDEO_CONFERENCE,
+    Archive = ffi::MFX_SCENARIO_ARCHIVE,
+    LiveStream = ffi::MFX_SCENARIO_LIVE_STREAMING,
+    CameraCapture = ffi::MFX_SCENARIO_CAMERA_CAPTURE,
+    VideoSurveillance = ffi::MFX_SCENARIO_VIDEO_SURVEILLANCE,
+    GameStream = ffi::MFX_SCENARIO_GAME_STREAMING,
+    RemoteGaming = ffi::MFX_SCENARIO_REMOTE_GAMING,
+}
+
+#[derive(Debug)]
+#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[doc = " The ContentInfo enumerator itemizes content types for the encoding session."]
+pub enum ContentInfo {
+    Unknown = ffi::MFX_CONTENT_UNKNOWN,
+    FullScreenVideo = ffi::MFX_CONTENT_FULL_SCREEN_VIDEO,
+    NonVideoScreen = ffi::MFX_CONTENT_NON_VIDEO_SCREEN,
 }

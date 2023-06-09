@@ -108,7 +108,7 @@ pub async fn main() {
         let mut ctrl = EncodeCtrl::new();
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420).await {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

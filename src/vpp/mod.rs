@@ -12,7 +12,7 @@ use crate::{
     constants::{ChromaFormat, FourCC, PicStruct},
     get_library,
     videoparams::{MfxVideoParams, VideoParams},
-    FrameSurface, Session,
+    FrameSurface, Session, utils::SharedPtr,
 };
 
 // pub struct FrameInfo {
@@ -43,7 +43,7 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
         assert!(!params.io_pattern().is_empty(), "params IOPattern not set");
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Init(session.inner, &mut ***params) }.into();
+            unsafe { lib.MFXVideoVPP_Init(session.inner.0, &mut ***params) }.into();
 
         trace!("VPP init = {:?}", status);
 
@@ -70,25 +70,28 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
         let start_time = Instant::now();
         let lib = get_library().unwrap();
 
-        let input = frame
-            .map(|f| f.inner as *mut _)
-            .unwrap_or(std::ptr::null_mut());
-        let session = self.session.inner;
+        let mut output_surface = SharedPtr(std::ptr::null_mut());
+        {
+            let input = frame
+                .map(|f| f.inner as *mut _)
+                .unwrap_or(std::ptr::null_mut());
 
-        let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
-        // dbg!(sync_point, output_surface);
+            let session = self.session.inner.0;
 
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_ProcessFrameAsync(session, input, &mut output_surface) }
-                .into();
+            // dbg!(sync_point, output_surface);
 
-        trace!("Process frame start = {:?}", status);
+            let status: MfxStatus =
+                unsafe { lib.MFXVideoVPP_ProcessFrameAsync(session, input, &mut output_surface.0) }
+                    .into();
 
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
+            trace!("Process frame start = {:?}", status);
+
+            if status != MfxStatus::NoneOrDone {
+                return Err(status);
+            }
         }
 
-        let mut output_surface = FrameSurface::try_from(output_surface)?;
+        let mut output_surface = FrameSurface::try_from(output_surface.0)?;
 
         let output_surface = task::spawn_blocking(move || {
             output_surface.synchronize(timeout)?;
@@ -121,9 +124,9 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// for more info.
     pub fn reset(&mut self, mut params: VppVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
-        let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Reset(self.session.inner, &mut **params) }.into();
+        let status: MfxStatus = unsafe { lib.MFXVideoVPP_Reset(session, &mut **params) }.into();
 
         trace!("VPP reset = {:?}", status);
 
@@ -141,11 +144,12 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// for more info.
     pub fn get_surface_input<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
 
         let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForVPP(self.session.inner, &mut raw_surface) }.into();
+            unsafe { lib.MFXMemory_GetSurfaceForVPP(session, &mut raw_surface) }.into();
 
         trace!("VPP get input surface = {:?}", status);
 
@@ -165,12 +169,12 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// for more info.
     pub fn get_surface_output<'c: 'a>(&mut self) -> Result<FrameSurface<'c>, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut raw_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
 
         let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForVPPOut(self.session.inner, &mut raw_surface) }
-                .into();
+            unsafe { lib.MFXMemory_GetSurfaceForVPPOut(session, &mut raw_surface) }.into();
 
         trace!("VPP get output surface = {:?}", status);
 
@@ -190,11 +194,12 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// for more info.
     pub fn params(&self) -> Result<VppVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut params = VppVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_GetVideoParam(self.session.inner, &mut **params) }.into();
+            unsafe { lib.MFXVideoVPP_GetVideoParam(session, &mut **params) }.into();
 
         trace!("VPP get params = {:?}", status);
 
@@ -210,15 +215,19 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-query
     /// for more info.
-    pub fn query(session: &mut Session, input_params: Option<VppVideoParams>) -> Result<VppVideoParams, (MfxStatus, VppVideoParams)> {
+    pub fn query(
+        session: &mut Session,
+        input_params: Option<VppVideoParams>,
+    ) -> Result<VppVideoParams, (MfxStatus, VppVideoParams)> {
         let lib = get_library().unwrap();
+        let session = session.inner.0;
 
         let mut input_params = input_params.unwrap_or(VppVideoParams::default());
 
         let mut params = VppVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Query(session.inner, &mut **input_params, &mut **params) }.into();
+            unsafe { lib.MFXVideoVPP_Query(session, &mut **input_params, &mut **params) }.into();
 
         trace!("VPP query = {:?}", status);
 
@@ -233,11 +242,12 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
 impl Drop for VideoProcessor<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
-        unsafe { lib.MFXVideoVPP_Close(self.session.inner) };
+        let session = self.session.inner.0;
+        unsafe { lib.MFXVideoVPP_Close(session) };
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 /// Configurations related to video processing. See the definition of the mfxInfoVPP structure for details.
 pub struct VppVideoParams {
     inner: VideoParams,

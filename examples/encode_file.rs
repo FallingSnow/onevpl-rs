@@ -92,7 +92,7 @@ pub async fn main() {
 
         // Read a frame's worth of data from file into the allocated FrameSurface
         // If we need more data to read one frame, we can assume we are done
-        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420).await {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

@@ -23,7 +23,7 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
         let lib = get_library().unwrap();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Init(session.inner, &mut **params) }.into();
+            unsafe { lib.MFXVideoDECODE_Init(session.inner.0, &mut **params) }.into();
 
         trace!("Decode init = {:?}", status);
 
@@ -105,7 +105,7 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
 
             let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
             let surface_work = std::ptr::null_mut();
-            let session = self.session.inner;
+            let session = self.session.inner.0;
 
             let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
             // dbg!(sync_point, output_surface);
@@ -155,11 +155,12 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
 
     pub fn surface(&mut self) -> Result<FrameSurface, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut surface = std::ptr::null_mut();
 
         let status: MfxStatus =
-            unsafe { lib.MFXMemory_GetSurfaceForDecode(self.session.inner, &mut surface) }.into();
+            unsafe { lib.MFXMemory_GetSurfaceForDecode(session, &mut surface) }.into();
 
         // dbg!(sync_point, output_surface);
 
@@ -179,9 +180,10 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-setskipmode for more info.
     pub fn set_skip(&mut self, mode: SkipMode) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_SetSkipMode(self.session.inner, mode.repr()) }.into();
+            unsafe { lib.MFXVideoDECODE_SetSkipMode(session, mode.repr()) }.into();
 
         // dbg!(sync_point, output_surface);
 
@@ -204,9 +206,10 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-reset for more info.
     pub fn reset(&mut self, mut params: MfxVideoParams) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_Reset(self.session.inner, &mut **params) }.into();
+            unsafe { lib.MFXVideoDECODE_Reset(session, &mut **params) }.into();
 
         trace!("Decode reset = {:?}", status);
 
@@ -222,11 +225,12 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
     /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_decode.html#mfxvideodecode-getvideoparam for more info.
     pub fn params(&self) -> Result<MfxVideoParams, MfxStatus> {
         let lib = get_library().unwrap();
+        let session = self.session.inner.0;
 
         let mut params = MfxVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoDECODE_GetVideoParam(self.session.inner, &mut **params) }
+            unsafe { lib.MFXVideoDECODE_GetVideoParam(session, &mut **params) }
                 .into();
 
         trace!("Decode get params = {:?}", status);
@@ -242,7 +246,8 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
 impl Drop for Decoder<'_, '_> {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
-        unsafe { lib.MFXVideoDECODE_Close(self.session.inner) };
+            let session = self.session.inner.0;
+            unsafe { lib.MFXVideoDECODE_Close(session) };
     }
 }
 

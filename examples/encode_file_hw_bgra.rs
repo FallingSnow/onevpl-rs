@@ -80,7 +80,7 @@ pub async fn main() {
 
     // We need to use the VPP because when HW encoding only frames in HW formats are supported (Eg. YUV12 -> NV12)
     let mut vpp_params = VppVideoParams::default();
-    vpp_params.set_io_pattern(IoPattern::IN_VIDEO_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
+    vpp_params.set_io_pattern(IoPattern::IN_SYSTEM_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
 
     vpp_params.set_in_fourcc(FourCC::Rgb4OrBgra);
     vpp_params.set_in_picstruct(input_frame_struct);
@@ -109,7 +109,7 @@ pub async fn main() {
         let mut ctrl = EncodeCtrl::new();
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::Rgb4OrBgra) {
+        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::Rgb4OrBgra).await {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

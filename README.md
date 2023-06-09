@@ -46,6 +46,12 @@ RUST_LOG=trace cargo run --example encode_file
 ## Notes
 - HW encoding requires HW input formats (NV12 instead of YUV). You should use the VPP to preprocess the video/frames into HW formats. See `encode_file_hw` example.
 
+## Thread Safety
+It appears the OneVPL is thread safe in the "main loop" of the application.
+https://community.intel.com/t5/Media-Intel-oneAPI-Video/oneVPL-beta10-concurrent-encode-stream/m-p/1233576
+
+This library does it's best to try to enforce that. If you find a theading bug, please open an issue.
+
 ## Todo
 - Encode
 - Decode

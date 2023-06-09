@@ -61,7 +61,7 @@ pub async fn main() {
 
     // Get information about the bitstream we are about to decode
     let params = session
-        .decode_header(&mut bitstream, constants::IoPattern::OUT_SYSTEM_MEMORY)
+        .decode_header(&mut bitstream, constants::IoPattern::SYSTEM_MEMORY)
         .unwrap();
 
     let decoder = session.decoder(params).unwrap();

@@ -72,3 +72,10 @@ pub(crate) unsafe fn str_from_null_terminated_utf8_i8(s: &[i8]) -> &str {
     let u = unsafe { &*(s as *const [i8] as *const [u8]) };
     str_from_null_terminated_utf8(u)
 }
+
+#[derive(Debug)]
+pub struct SharedPtr<T>(pub T);
+
+unsafe impl<T> Send for SharedPtr<T> {}
+
+unsafe impl<T> Sync for SharedPtr<T> {}
