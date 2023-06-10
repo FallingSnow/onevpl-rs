@@ -56,12 +56,59 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
         Ok(decoder)
     }
 
+    pub async fn queue(&self,
+        frame: Option<&mut FrameSurface<'_>>,
+        timeout: Option<u32>,
+    ) -> Result<FrameSurface, MfxStatus> {
+        let start_time = Instant::now();
+        let lib = get_library().unwrap();
+
+        let mut output_surface = SharedPtr(std::ptr::null_mut());
+        {
+            let input = frame
+                .map(|f| f.inner as *mut _)
+                .unwrap_or(std::ptr::null_mut());
+
+            let session = self.session.inner.0;
+
+            // dbg!(sync_point, output_surface);
+
+            let status: MfxStatus =
+                unsafe { lib.MFXVideoVPP_ProcessFrameAsync(session, input, &mut output_surface.0) }
+                    .into();
+
+            trace!("Process frame start = {:?}", status);
+
+            if status != MfxStatus::NoneOrDone {
+                return Err(status);
+            }
+        }
+
+        let output_surface = FrameSurface::try_from(output_surface.0)?;
+
+        let frame_info = output_surface.inner.Info;
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
+        let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
+        let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
+
+        trace!(
+            "Queue frame = {:?} {}x{} {:?}",
+            format,
+            width,
+            height,
+            start_time.elapsed()
+        );
+
+        Ok(output_surface)
+    }
+
     /// The function processes a single input frame to a single output frame
     /// with internal allocation of output frame.
     ///
     /// See
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-processframeasync
     /// for more info.
+    // TODO: Use queue function instead of duplicating code
     pub async fn process(
         &self,
         frame: Option<&mut FrameSurface<'_>>,
