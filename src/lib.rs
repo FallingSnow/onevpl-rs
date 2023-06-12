@@ -36,6 +36,7 @@ pub mod bitstream;
 pub mod constants;
 pub mod decode;
 pub mod encode;
+#[cfg(test)]
 mod tests;
 pub mod utils;
 mod videoparams;
@@ -115,7 +116,7 @@ impl Loader {
         let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
         let mut i = 0;
         let mut status = MfxStatus::NoneOrDone;
-        let mut implementations = Vec::new();
+        let implementations = Vec::new();
 
         let lib = get_library().unwrap();
 
@@ -1256,8 +1257,9 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
         lib
     };
 
-    // FIXME: Check for failure (unwrap/expect)
-    LIBRARY.set(lib);
+    if LIBRARY.set(lib).is_err() {
+        panic!("Failed to set library");
+    }
 
     debug!("Dynamic library loaded successfully");
 
