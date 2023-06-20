@@ -18,7 +18,7 @@ pub async fn main() {
     let mut file = std::fs::File::open("tests/frozen180.yuv").unwrap();
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output.hevc");
-    let mut output = std::fs::File::create(output_path).unwrap();
+    let mut output = std::fs::File::create(output_path.as_path()).unwrap();
 
     let width = 320;
     let height = 180;
@@ -133,4 +133,6 @@ pub async fn main() {
             assert_eq!(bitstream_size as u64, bytes_copied);
         }
     }
+
+    println!("Encoded file was written to: {}", output_path.display());
 }
