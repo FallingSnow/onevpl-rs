@@ -737,6 +737,7 @@ impl<'a> FrameSurface<'a> {
                 width as usize * height as usize * 3 / 2
             }
             FourCC::Rgb4OrBgra => width as usize * height as usize * 4,
+            FourCC::I010 => width as usize * height as usize * 10 / 8 * 3 / 2,
             _ => todo!(),
         }
     }
@@ -810,7 +811,6 @@ impl io::Read for FrameSurface<'_> {
             // FIXME: Remove unwrap and replace with actual error
             match FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5).unwrap() {
                 FourCC::IyuvOrI420 | FourCC::YV12 => {
-
                     // Y
                     let y_start = self.read_offset / w;
                     let total_y_size = w * h;
@@ -948,6 +948,9 @@ impl io::Read for FrameSurface<'_> {
                 //         fwrite(data->B + i * pitch, 1, pitch, f);
                 //     }
                 //     break;
+                FourCC::Rgb4OrBgra => {
+                    bytes_written += buf.write(&self.b()[self.read_offset..]).unwrap();
+                }
                 _ => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Unsupported,
@@ -1109,13 +1112,13 @@ impl<'a> Session<'a> {
         }
 
         let frame_info = unsafe { (**params).__bindgen_anon_1.mfx.FrameInfo };
-        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5);
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let framerate_n = frame_info.FrameRateExtN;
         let framerate_d = frame_info.FrameRateExtD;
         let colorspace =
-            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7).unwrap();
+            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7);
 
         trace!(
             "Header params = {:?} {:?} {}x{} @ {}fps",

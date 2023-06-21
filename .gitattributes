@@ -1,3 +1,4 @@
 *.bgra filter=lfs diff=lfs merge=lfs -text
 *.yuv filter=lfs diff=lfs merge=lfs -text
 *.hevc filter=lfs diff=lfs merge=lfs -text
+tests/frozen.h264 filter=lfs diff=lfs merge=lfs -text
