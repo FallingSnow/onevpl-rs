@@ -22,7 +22,7 @@ impl VideoParams {
     pub fn async_depth(&self) -> u16 {
         self.inner.AsyncDepth
     }
-    /// If you are running VPP after a decode operation you should be using [`IoPattern::OUT_VIDEO_MEMORY`] on decode params and [`IoPattern::VIDEO_MEMORY`] on this function.
+
     pub fn set_async_depth(&mut self, depth: u16) {
         self.inner.AsyncDepth = depth;
     }
@@ -223,6 +223,27 @@ impl MfxVideoParams {
 
     pub fn set_chroma_format(&mut self, format: ChromaFormat) {
         (**self).__bindgen_anon_1.mfx.FrameInfo.ChromaFormat = format.repr() as u16;
+    }
+
+    pub fn bitdepth_luma(&self) -> u16 {
+        unsafe {self.__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma}
+    }
+    pub fn set_bitdepth_luma(&mut self, bit_depth: u16) {
+        self.__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma = bit_depth;
+        match bit_depth {
+            8 => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 0,
+            _ => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 1,
+        };
+    }
+    pub fn bitdepth_chroma(&self) -> u16 {
+        unsafe {self.__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma}
+    }
+    pub fn set_bitdepth_chroma(&mut self, bit_depth: u16) {
+        self.__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma = bit_depth;
+        match bit_depth {
+            8 => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 0,
+            _ => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 1,
+        };
     }
 
     pub fn codec(&self) -> Codec {

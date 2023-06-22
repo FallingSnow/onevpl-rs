@@ -724,10 +724,16 @@ impl<'a> FrameSurface<'a> {
     }
 
     pub fn frame_size(format: FourCC, width: u16, height: u16) -> usize {
+        // dbg!(&format);
         match format {
             FourCC::IyuvOrI420 | FourCC::NV12 | FourCC::YV12 => {
                 width as usize * height as usize * 3 / 2
             }
+            FourCC::P010 => width as usize * height as usize * 10 / 8 * 3 / 2,
+            FourCC::YUY2 => width as usize * height as usize * 2,
+            FourCC::Y210 => width as usize * height as usize * 10 / 8 * 2,
+            FourCC::AYUV => width as usize * height as usize * 3,
+            FourCC::Y410 => width as usize * height as usize * 10 / 8 * 3,
             FourCC::Rgb4OrBgra => width as usize * height as usize * 4,
             _ => todo!(),
         }

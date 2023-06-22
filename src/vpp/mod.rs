@@ -6,7 +6,7 @@ use std::{
 use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
 use tokio::task;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::{
     constants::{ChromaFormat, FourCC, PicStruct},
@@ -46,10 +46,13 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
             unsafe { lib.MFXVideoVPP_Init(session.inner.0, &mut ***params) }.into();
 
         trace!("VPP init = {:?}", status);
-
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
+        
+        match status {
+            MfxStatus::NoneOrDone => {},
+            MfxStatus::WarnIncompatibleVideoParam =>
+                warn!("Incompatible Video Parameters. The function detected some video parameters were incompatible with others; incompatibility resolved."),
+            _ => return Err(status)
+        };
 
         let decoder = Self { session };
 
@@ -383,6 +386,48 @@ impl VppVideoParams {
     }
     pub fn set_out_fourcc(&mut self, fourcc: FourCC) {
         self.out_mut().FourCC = fourcc.repr() as u32;
+    }
+
+    pub fn in_bitdepth_luma(&self) {
+        self.in_().BitDepthLuma;
+    }
+    pub fn out_bitdepth_luma(&self) {
+        self.out().BitDepthLuma;
+    }
+    pub fn set_in_bitdepth_luma(&mut self, bit_depth: u16) {
+        self.in_mut().BitDepthLuma = bit_depth;
+        match bit_depth {
+            8 => self.in_mut().Shift = 0,
+            _ => self.in_mut().Shift = 1,
+        };
+    }
+    pub fn set_out_bitdepth_luma(&mut self, bit_depth: u16) {
+        self.out_mut().BitDepthLuma = bit_depth;
+        match bit_depth {
+            8 => self.out_mut().Shift = 0,
+            _ => self.out_mut().Shift = 1,
+        };
+    }
+
+    pub fn in_bitdepth_chroma(&self) {
+        self.in_().BitDepthChroma;
+    }
+    pub fn out_bitdepth_chroma(&self) {
+        self.out().BitDepthChroma;
+    }
+    pub fn set_in_bitdepth_chroma(&mut self, bit_depth: u16) {
+        self.in_mut().BitDepthChroma = bit_depth;
+        match bit_depth {
+            8 => self.in_mut().Shift = 0,
+            _ => self.in_mut().Shift = 1,
+        };
+    }
+    pub fn set_out_bitdepth_chroma(&mut self, bit_depth: u16) {
+        self.out_mut().BitDepthChroma = bit_depth;
+        match bit_depth {
+            8 => self.out_mut().Shift = 0,
+            _ => self.out_mut().Shift = 1,
+        };
     }
 
     /// 23.97 FPS == numerator 24000, denominator = 1001

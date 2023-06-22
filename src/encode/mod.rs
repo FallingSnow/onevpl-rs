@@ -2,7 +2,7 @@ use ffi::MfxStatus;
 use intel_onevpl_sys as ffi;
 use std::{mem, time::Instant};
 use tokio::task;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 pub use crate::videoparams::{
     ExtraCodingOption, ExtraCodingOption1, ExtraCodingOption2, ExtraCodingOption3,
@@ -62,9 +62,12 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
 
         trace!("Encode init = {:?}", status);
 
-        if status != MfxStatus::NoneOrDone {
-            return Err(status);
-        }
+        match status {
+            MfxStatus::NoneOrDone => {},
+            MfxStatus::WarnIncompatibleVideoParam =>
+                warn!("Incompatible Video Parameters. The function detected some video parameters were incompatible with others; incompatibility resolved."),
+            _ => return Err(status)
+        };
 
         let mut encoder = Self {
             session,
