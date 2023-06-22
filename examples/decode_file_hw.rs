@@ -27,7 +27,7 @@ pub async fn main() {
     let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output.yuv");
-    let mut output = std::fs::File::create(output_path).unwrap();
+    let mut output = std::fs::File::create(output_path.as_path()).unwrap();
 
     let mut loader = Loader::new().unwrap();
 
@@ -134,4 +134,6 @@ pub async fn main() {
         let mut yuv_frame = vpp.process(Some(&mut frame), None).await.unwrap();
         io::copy(&mut yuv_frame, &mut output).unwrap();
     }
+
+    println!("Decoded file was written to: {}", output_path.display());
 }

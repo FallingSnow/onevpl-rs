@@ -22,7 +22,7 @@ pub async fn main() {
     // Create output file
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output-nv12.yuv");
-    let mut output = std::fs::File::create(output_path).unwrap();
+    let mut output = std::fs::File::create(output_path.as_path()).unwrap();
 
     // Define some input parameters
     let width = 320;
@@ -82,4 +82,6 @@ pub async fn main() {
         let bytes_copied = std::io::copy(&mut vpp_frame, &mut output).unwrap();
         assert_ne!(bytes_copied, 0);
     }
+
+    println!("Processed file was written to: {}", output_path.display());
 }

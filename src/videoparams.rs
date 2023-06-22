@@ -4,15 +4,17 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::constants::{ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage, self};
+use crate::constants::{
+    self, ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage,
+};
 
 #[derive(Clone, Debug)]
 /// See https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_structs_cross_component.html#_CPPv413mfxVideoParam for more info.
-/// 
+///
 /// This struct requires extra handling when using. In order for the ExtParam value to be set, you must set it with the result of the [`VideoParams::extra_params`] function.
 pub struct VideoParams {
     inner: ffi::mfxVideoParam,
-    _extra_params: Vec<Box<ExtraCodingOption>>
+    _extra_params: Vec<Box<ExtraCodingOption>>,
 }
 
 unsafe impl Send for VideoParams {}
@@ -47,7 +49,7 @@ impl Default for VideoParams {
     fn default() -> Self {
         Self {
             inner: unsafe { mem::zeroed() },
-            _extra_params: Vec::default()
+            _extra_params: Vec::default(),
         }
     }
 }
@@ -109,6 +111,14 @@ impl MfxVideoParams {
             .__bindgen_anon_1
             .__bindgen_anon_1
             .GopRefDist = ref_dist;
+    }
+
+    pub fn set_bit_depth_luma(&mut self, depth: u16) {
+        (**self).__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma = depth;
+    }
+
+    pub fn set_bit_depth_chroma(&mut self, depth: u16) {
+        (**self).__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma = depth;
     }
 
     #[doc = " Max number of all available reference frames (for AVC/HEVC, NumRefFrame defines DPB size). If NumRefFrame = 0, this parameter is not specified.\nSee also NumRefActiveP, NumRefActiveBL0, and NumRefActiveBL1 in the mfxExtCodingOption3 structure, which set a number of active references."]
@@ -247,7 +257,8 @@ impl MfxVideoParams {
     }
 
     pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { (**self).__bindgen_anon_1.mfx.CodecId } as ffi::_bindgen_ty_14).unwrap()
+        Codec::from_repr(unsafe { (**self).__bindgen_anon_1.mfx.CodecId } as ffi::_bindgen_ty_14)
+            .unwrap()
     }
     pub fn set_codec(&mut self, codec: Codec) {
         (**self).__bindgen_anon_1.mfx.CodecId = codec as u32;
@@ -370,7 +381,7 @@ pub enum ExtraCodingOption {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtraCodingOption1 {
-    inner: ffi::mfxExtCodingOption
+    inner: ffi::mfxExtCodingOption,
 }
 
 impl Default for ExtraCodingOption1 {
@@ -404,7 +415,7 @@ impl ExtraCodingOption1 {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtraCodingOption2 {
-    inner: ffi::mfxExtCodingOption2
+    inner: ffi::mfxExtCodingOption2,
 }
 
 impl Default for ExtraCodingOption2 {
@@ -438,7 +449,7 @@ impl ExtraCodingOption2 {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtraCodingOption3 {
-    inner: ffi::mfxExtCodingOption3
+    inner: ffi::mfxExtCodingOption3,
 }
 
 impl Default for ExtraCodingOption3 {

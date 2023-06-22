@@ -284,6 +284,8 @@ pub struct FrameSurface<'a> {
     inner: &'a mut ffi::mfxFrameSurface1,
     read_offset: usize,
     buffer: Arc<Mutex<Vec<u8>>>,
+    // I'm not sure if mapping even needs to be tracked. It seems like calling release on a mapped frame surface works without first unmapping the frame surface.
+    mapped: bool,
 }
 
 unsafe impl Send for FrameSurface<'_> {}
@@ -311,7 +313,8 @@ impl<'a> FrameSurface<'a> {
     }
 
     /// Sets pointers of surface->Info.Data to actual pixel data, providing read-write access. See [`ffi::mfxFrameSurfaceInterface::Map`] for more info.
-    fn map<'b>(&'b mut self, access: MemoryFlag) -> Result<(), MfxStatus> {
+    /// You shouldn't have to call this function, it is done automatically.
+    pub fn map<'b>(&'b mut self, access: MemoryFlag) -> Result<(), MfxStatus> {
         // Get memory mapping function
         let func = self.interface().Map.unwrap();
 
@@ -324,11 +327,14 @@ impl<'a> FrameSurface<'a> {
             return Err(status);
         }
 
+        self.mapped = true;
+
         Ok(())
     }
 
     /// Invalidates pointers of surface->Info.Data and sets them to NULL. See [`ffi::mfxFrameSurfaceInterface::Unmap`] for more info.
-    fn unmap(&mut self) -> Result<(), MfxStatus> {
+    /// You shouldn't have to call this function, it is done automatically. However if you read from/mapped the frame surface and want to write to it without first dropping, you need to call this function.
+    pub fn unmap(&mut self) -> Result<(), MfxStatus> {
         // Get memory mapping function
         let func = self.interface().Unmap.unwrap();
 
@@ -340,6 +346,8 @@ impl<'a> FrameSurface<'a> {
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
+
+        self.mapped = false;
 
         Ok(())
     }
@@ -735,6 +743,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::AYUV => width as usize * height as usize * 3,
             FourCC::Y410 => width as usize * height as usize * 10 / 8 * 3,
             FourCC::Rgb4OrBgra => width as usize * height as usize * 4,
+            FourCC::I010 => width as usize * height as usize * 10 / 8 * 3 / 2,
             _ => todo!(),
         }
     }
@@ -749,6 +758,9 @@ impl<'a> FrameSurface<'a> {
 
 impl Drop for FrameSurface<'_> {
     fn drop(&mut self) {
+        if self.mapped {
+            self.unmap().unwrap();
+        }
         self.release().unwrap();
     }
 }
@@ -771,6 +783,7 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
             inner: unsafe { value.as_mut().unwrap() },
             read_offset: 0,
             buffer: Arc::new(Mutex::new(vec![0u8; frame_size])),
+            mapped: false,
         };
 
         // If timestamp is 0 set it to unknown
@@ -782,10 +795,13 @@ impl<'a> TryFrom<*mut ffi::mfxFrameSurface1> for FrameSurface<'a> {
     }
 }
 
+/// Make sure you unmap the surface if you want to write to it after reading.
 impl io::Read for FrameSurface<'_> {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
         // FIXME: Remove unwrap and replace with actual error
-        self.map(MemoryFlag::READ).unwrap();
+        if !self.mapped {
+            self.map(MemoryFlag::READ).unwrap();
+        }
 
         let data: ffi::mfxFrameData = self.inner.Data;
         let info: ffi::mfxFrameInfo = self.inner.Info;
@@ -797,206 +813,161 @@ impl io::Read for FrameSurface<'_> {
 
         let mut bytes_written = 0;
 
-        // We wrap this in a closure so we can capture the result. No matter
-        // what the result is, we are still able to unmap the surface.
-        let mut write_func = || {
-            'outer: {
-                // FIXME: Remove unwrap and replace with actual error
-                match FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5).unwrap() {
-                    FourCC::IyuvOrI420 | FourCC::YV12 => {
-                        #[cfg(feature = "vector-write")]
-                        let mut io_slices: Vec<io::IoSlice> = Vec::with_capacity(h * 2);
+        'outer: {
+            // FIXME: Remove unwrap and replace with actual error
+            match FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5).unwrap() {
+                FourCC::IyuvOrI420 | FourCC::YV12 => {
+                    // Y
+                    let y_start = self.read_offset / w;
+                    let total_y_size = w * h;
+                    // dbg!(pitch, w, y_start, h, self.read_offset);
+                    for i in y_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
 
-                        // Y
-                        let y_start = self.read_offset / w;
-                        let total_y_size = w * h;
-                        // dbg!(pitch, w, y_start, h, self.read_offset);
-                        for i in y_start..h {
-                            let offset = i * pitch;
-                            let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
-                            debug_assert!(!ptr.is_null());
-                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-
-                            // This vector write implementation is not very good because it gets all the slices (entire frame) even though we might end up only writing a couple slices. So it has a lot of overhead.
-                            #[cfg(feature = "vector-write")]
-                            {
-                                let io_slice = std::io::IoSlice::new(slice);
-                                io_slices.push(io_slice);
-                            }
-                            #[cfg(not(feature = "vector-write"))]
-                            {
-                                // We don't want to write a portion of a slice, only whole slices
-                                let bytes = if slice.len() <= buf.len() {
-                                    // FIXME: remove unwrap
-                                    buf.write(slice).unwrap()
-                                } else {
-                                    0
-                                };
-                                if bytes == 0 {
-                                    break 'outer;
-                                }
-                                bytes_written += bytes;
-                            }
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
                         }
-
-                        let pitch = pitch / 2;
-                        let h = h / 2;
-                        let w = w / 2;
-                        let total_uv_size = w * h;
-
-                        // U
-                        let u_start = (self.read_offset + bytes_written - total_y_size) / w;
-                        for i in u_start..h {
-                            let offset = i * pitch;
-                            let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
-                            debug_assert!(!ptr.is_null());
-                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                            #[cfg(feature = "vector-write")]
-                            {
-                                let io_slice = std::io::IoSlice::new(slice);
-                                io_slices.push(io_slice);
-                            }
-                            #[cfg(not(feature = "vector-write"))]
-                            {
-                                // We don't want to write a portion of a slice, only whole slices
-                                let bytes = if slice.len() <= buf.len() {
-                                    // FIXME: remove unwrap
-                                    buf.write(slice).unwrap()
-                                } else {
-                                    0
-                                };
-                                if bytes == 0 {
-                                    break 'outer;
-                                }
-                                bytes_written += bytes;
-                            }
-                        }
-
-                        // V
-                        let v_start =
-                            (self.read_offset + bytes_written - total_y_size - total_uv_size) / w;
-                        for i in v_start..h {
-                            let offset = i * pitch;
-                            let ptr = unsafe { data.__bindgen_anon_5.V.offset(offset as isize) };
-                            debug_assert!(!ptr.is_null());
-                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                            #[cfg(feature = "vector-write")]
-                            {
-                                let io_slice = std::io::IoSlice::new(slice);
-                                io_slices.push(io_slice);
-                            }
-                            #[cfg(not(feature = "vector-write"))]
-                            {
-                                // We don't want to write a portion of a slice, only whole slices
-                                let bytes = if slice.len() <= buf.len() {
-                                    // FIXME: remove unwrap
-                                    buf.write(slice).unwrap()
-                                } else {
-                                    0
-                                };
-                                if bytes == 0 {
-                                    break 'outer;
-                                }
-                                bytes_written += bytes;
-                            }
-                        }
-                        #[cfg(feature = "vector-write")]
-                        {
-                            bytes_written +=
-                                io::Write::write_vectored(&mut buf, &io_slices).unwrap();
-                        }
-                        // dbg!(io_slices.len(), bytes_written);
-                        // assert_eq!(buffers_written, (h as usize) * 2);
+                        bytes_written += bytes;
                     }
-                    FourCC::NV12 => {
-                        let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
 
-                        // Y
-                        let y_start = self.read_offset / w;
-                        let total_y_size = w * h;
-                        // dbg!(pitch, w, y_start, h, self.read_offset);
-                        for i in y_start..h {
-                            let offset = i * pitch;
-                            let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
-                            debug_assert!(!ptr.is_null());
-                            // dbg!(i, offset, ptr, h, w, y_start);
-                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                    let pitch = pitch / 2;
+                    let h = h / 2;
+                    let w = w / 2;
+                    let total_uv_size = w * h;
 
-                            // We don't want to write a portion of a slice, only whole slices
-                            let bytes = if slice.len() <= buf.len() {
-                                // FIXME: remove unwrap
-                                buf.write(slice).unwrap()
-                            } else {
-                                0
-                            };
-                            if bytes == 0 {
-                                break 'outer;
-                            }
-                            bytes_written += bytes;
+                    // U
+                    let u_start = (self.read_offset + bytes_written - total_y_size) / w;
+                    for i in u_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_4.U.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
                         }
+                        bytes_written += bytes;
+                    }
 
-                        let h = h / 2;
-
-                        // U
-                        let u_start = (self.read_offset + bytes_written - total_y_size) / w;
-                        for i in u_start..h {
-                            let offset = i * pitch;
-                            let ptr = unsafe { data.__bindgen_anon_4.UV.offset(offset as isize) };
-                            debug_assert!(!ptr.is_null());
-                            let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
-                            // We don't want to write a portion of a slice, only whole slices
-                            let bytes = if slice.len() <= buf.len() {
-                                // FIXME: remove unwrap
-                                buf.write(slice).unwrap()
-                            } else {
-                                0
-                            };
-                            if bytes == 0 {
-                                break 'outer;
-                            }
-                            bytes_written += bytes;
+                    // V
+                    let v_start =
+                        (self.read_offset + bytes_written - total_y_size - total_uv_size) / w;
+                    for i in v_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_5.V.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
                         }
+                        bytes_written += bytes;
                     }
-                    // case MFX_FOURCC_NV12:
-                    //     // Y
-                    //     pitch = data->Pitch;
-                    //     for (i = 0; i < h; i++) {
-                    //         fwrite(data->Y + i * pitch, 1, w, f);
-                    //     }
-                    //     // UV
-                    //     h /= 2;
-                    //     for (i = 0; i < h; i++) {
-                    //         fwrite(data->UV + i * pitch, 1, w, f);
-                    //     }
-                    //     break;
-                    // case MFX_FOURCC_RGB4:
-                    //     // Y
-                    //     pitch = data->Pitch;
-                    //     for (i = 0; i < h; i++) {
-                    //         fwrite(data->B + i * pitch, 1, pitch, f);
-                    //     }
-                    //     break;
-                    _ => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Unsupported,
-                            format!(
-                                "Unsupported format {:?}",
-                                FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5)
-                            ),
-                        ));
+                }
+                FourCC::NV12 => {
+                    let pitch = unsafe { data.__bindgen_anon_2.Pitch } as usize;
+
+                    // Y
+                    let y_start = self.read_offset / w;
+                    let total_y_size = w * h;
+                    // dbg!(pitch, w, y_start, h, self.read_offset);
+                    for i in y_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_3.Y.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        // dbg!(i, offset, ptr, h, w, y_start);
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
+                        }
+                        bytes_written += bytes;
                     }
-                };
+
+                    let h = h / 2;
+
+                    // U
+                    let u_start = (self.read_offset + bytes_written - total_y_size) / w;
+                    for i in u_start..h {
+                        let offset = i * pitch;
+                        let ptr = unsafe { data.__bindgen_anon_4.UV.offset(offset as isize) };
+                        debug_assert!(!ptr.is_null());
+                        let slice: &[u8] = unsafe { std::slice::from_raw_parts(ptr, w) };
+                        // We don't want to write a portion of a slice, only whole slices
+                        let bytes = if slice.len() <= buf.len() {
+                            // FIXME: remove unwrap
+                            buf.write(slice).unwrap()
+                        } else {
+                            0
+                        };
+                        if bytes == 0 {
+                            break 'outer;
+                        }
+                        bytes_written += bytes;
+                    }
+                }
+                // case MFX_FOURCC_NV12:
+                //     // Y
+                //     pitch = data->Pitch;
+                //     for (i = 0; i < h; i++) {
+                //         fwrite(data->Y + i * pitch, 1, w, f);
+                //     }
+                //     // UV
+                //     h /= 2;
+                //     for (i = 0; i < h; i++) {
+                //         fwrite(data->UV + i * pitch, 1, w, f);
+                //     }
+                //     break;
+                // case MFX_FOURCC_RGB4:
+                //     // Y
+                //     pitch = data->Pitch;
+                //     for (i = 0; i < h; i++) {
+                //         fwrite(data->B + i * pitch, 1, pitch, f);
+                //     }
+                //     break;
+                FourCC::Rgb4OrBgra => {
+                    bytes_written += buf.write(&self.b()[self.read_offset..]).unwrap();
+                }
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        format!(
+                            "Unsupported format {:?}",
+                            FourCC::from_repr(info.FourCC as ffi::_bindgen_ty_5)
+                        ),
+                    ));
+                }
             };
-
-            Ok(())
         };
-
-        let result = write_func();
-
-        // FIXME: Remove unwrap and replace with actual error
-        self.unmap().unwrap();
-
-        result?;
 
         self.read_offset += bytes_written;
         Ok(bytes_written)
@@ -1147,13 +1118,13 @@ impl<'a> Session<'a> {
         }
 
         let frame_info = unsafe { (**params).__bindgen_anon_1.mfx.FrameInfo };
-        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5).unwrap();
+        let format = FourCC::from_repr(frame_info.FourCC as ffi::_bindgen_ty_5);
         let height = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropH };
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let framerate_n = frame_info.FrameRateExtN;
         let framerate_d = frame_info.FrameRateExtD;
         let colorspace =
-            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7).unwrap();
+            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7);
 
         trace!(
             "Header params = {:?} {:?} {}x{} @ {}fps",

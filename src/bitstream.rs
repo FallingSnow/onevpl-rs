@@ -48,6 +48,11 @@ impl<'a> Bitstream<'a> {
         self.inner.DataLength
     }
 
+    /// Reading or writing offset in the buffer
+    pub fn offset(&self) -> u32 {
+        self.inner.DataOffset
+    }
+
     /// Set the amount of data currently in the bitstream. Useful for when you add a buffer to a bitstream that already contains data.
     pub fn set_size(&mut self, size: usize) {
         assert!(size <= self.inner.MaxLength as usize);

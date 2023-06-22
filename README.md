@@ -5,7 +5,7 @@ oneVPL is Intel's replacement for intel-media-sdk.
 
 
 ## Features
-- [X] Software Encode
+- [x] Software Encode
 - [x] Hardware Encode
 - [x] Software Decode
 - [x] Hardware Decode
@@ -21,15 +21,14 @@ Building bindings requires clang to be installed.
 * [oneVPL](https://www.intel.com/content/www/us/en/developer/articles/tool/oneapi-standalone-components.html#onevpl)
 
 ### Windows
-If you install clang tools with VS build tools (not recommended), you may have to manually set the libclang path with an environmental variable in order to build. The folder should contain `libclang.dll`. For example in powershell:
+If you install clang tools with VS build tools (not recommended, use link above instead), you may have to manually set the libclang path with an environmental variable in order to build. The folder should contain `libclang.dll`. For example in powershell:
 ```
 $env:LIBCLANG_PATH="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"
 cargo build
 ```
 
 ## Usage
-See examples folder.
-
+See examples folder. You need git lfs to download the test files. You may need to run `git lfs install` after cloning.
 
 ### Examples
 

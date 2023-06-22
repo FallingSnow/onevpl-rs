@@ -12,7 +12,7 @@ pub async fn main() {
     tracing_subscriber::fmt::init();
 
     // Open file to read from
-    let mut file = std::fs::File::open("tests/frozen.hevc").unwrap();
+    let mut file = std::fs::File::open("tests/frozen.h264").unwrap();
     let mut output_path = PathBuf::from(env::temp_dir());
     output_path.push("output.yuv");
     let mut output = std::fs::File::create(output_path.as_path()).unwrap();
@@ -22,29 +22,11 @@ pub async fn main() {
     // Set software decoding
     loader.use_hardware(false);
 
-    // Set decode HEVC
-    loader
-        .set_filter_property(
-            "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
-            constants::Codec::HEVC,
-            None,
-        )
-        .unwrap();
-
-    // Set required API version to 2.2
-    loader
-        .set_filter_property(
-            "mfxImplDescription.ApiVersion.Version",
-            constants::ApiVersion::new(2, 2),
-            None,
-        )
-        .unwrap();
-
     let session = loader.new_session(0).unwrap();
 
     // Create a backing buffer that will contain the bitstream we are trying to decode
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
-    let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::HEVC);
+    let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::AVC);
 
     // We get the size of the buffer and subtract the amount of the buffer that
     // is used to get how much free buffer is available. io::copy will fail if
