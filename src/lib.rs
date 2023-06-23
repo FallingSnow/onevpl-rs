@@ -732,18 +732,19 @@ impl<'a> FrameSurface<'a> {
     }
 
     pub fn frame_size(format: FourCC, width: u16, height: u16) -> usize {
-        // dbg!(&format);
+        let width = width as usize;
+        let height = height as usize;
+        let wh = width * height;
+        let bit10 = 10 / 8;
+
         match format {
-            FourCC::IyuvOrI420 | FourCC::NV12 | FourCC::YV12 => {
-                width as usize * height as usize * 3 / 2
-            }
-            FourCC::P010 => width as usize * height as usize * 10 / 8 * 3 / 2,
-            FourCC::YUY2 => width as usize * height as usize * 2,
-            FourCC::Y210 => width as usize * height as usize * 10 / 8 * 2,
-            FourCC::AYUV => width as usize * height as usize * 3,
-            FourCC::Y410 => width as usize * height as usize * 10 / 8 * 3,
-            FourCC::Rgb4OrBgra => width as usize * height as usize * 4,
-            FourCC::I010 => width as usize * height as usize * 10 / 8 * 3 / 2,
+            FourCC::IyuvOrI420 | FourCC::NV12 | FourCC::YV12 => wh * 3 / 2,
+            FourCC::I010 | FourCC::P010 => wh * bit10 * 3 / 2,
+            FourCC::YUY2 | FourCC::I422 => wh * 2,
+            FourCC::Y210 => wh * bit10 * 2,
+            FourCC::AYUV => wh * 3,
+            FourCC::Y410 => wh * bit10 * 3,
+            FourCC::Rgb4OrBgra => wh * 4,
             _ => todo!(),
         }
     }
@@ -1123,8 +1124,7 @@ impl<'a> Session<'a> {
         let width = unsafe { frame_info.__bindgen_anon_1.__bindgen_anon_1.CropW };
         let framerate_n = frame_info.FrameRateExtN;
         let framerate_d = frame_info.FrameRateExtD;
-        let colorspace =
-            ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7);
+        let colorspace = ChromaFormat::from_repr(frame_info.ChromaFormat as ffi::_bindgen_ty_7);
 
         trace!(
             "Header params = {:?} {:?} {}x{} @ {}fps",

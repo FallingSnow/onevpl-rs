@@ -266,18 +266,18 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
     /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_vpp.html#mfxvideovpp-query
     /// for more info.
     pub fn query(
-        session: &mut Session,
-        input_params: Option<VppVideoParams>,
+        session: &Session,
+        input_params: Option<&VppVideoParams>,
     ) -> Result<VppVideoParams, (MfxStatus, VppVideoParams)> {
         let lib = get_library().unwrap();
         let session = session.inner.0;
 
-        let mut input_params = input_params.unwrap_or(VppVideoParams::default());
+        let input_params = input_params.map(|p| &***p as *const as *mut _).unwrap_or(std::ptr::null_mut());
 
         let mut params = VppVideoParams::default();
 
         let status: MfxStatus =
-            unsafe { lib.MFXVideoVPP_Query(session, &mut **input_params, &mut **params) }.into();
+            unsafe { lib.MFXVideoVPP_Query(session, input_params, &mut **params) }.into();
 
         trace!("VPP query = {:?}", status);
 
@@ -388,44 +388,44 @@ impl VppVideoParams {
         self.out_mut().FourCC = fourcc.repr() as u32;
     }
 
-    pub fn in_bitdepth_luma(&self) {
-        self.in_().BitDepthLuma;
+    pub fn in_bitdepth_luma(&self) -> u16 {
+        self.in_().BitDepthLuma
     }
-    pub fn out_bitdepth_luma(&self) {
-        self.out().BitDepthLuma;
+    pub fn out_bitdepth_luma(&self) -> u16 {
+        self.out().BitDepthLuma
     }
     pub fn set_in_bitdepth_luma(&mut self, bit_depth: u16) {
         self.in_mut().BitDepthLuma = bit_depth;
         match bit_depth {
-            8 => self.in_mut().Shift = 0,
+            0 | 8 => self.in_mut().Shift = 0,
             _ => self.in_mut().Shift = 1,
         };
     }
     pub fn set_out_bitdepth_luma(&mut self, bit_depth: u16) {
         self.out_mut().BitDepthLuma = bit_depth;
         match bit_depth {
-            8 => self.out_mut().Shift = 0,
+            0 | 8 => self.out_mut().Shift = 0,
             _ => self.out_mut().Shift = 1,
         };
     }
 
-    pub fn in_bitdepth_chroma(&self) {
-        self.in_().BitDepthChroma;
+    pub fn in_bitdepth_chroma(&self) -> u16 {
+        self.in_().BitDepthChroma
     }
-    pub fn out_bitdepth_chroma(&self) {
-        self.out().BitDepthChroma;
+    pub fn out_bitdepth_chroma(&self) -> u16 {
+        self.out().BitDepthChroma
     }
     pub fn set_in_bitdepth_chroma(&mut self, bit_depth: u16) {
         self.in_mut().BitDepthChroma = bit_depth;
         match bit_depth {
-            8 => self.in_mut().Shift = 0,
+            0 | 8 => self.in_mut().Shift = 0,
             _ => self.in_mut().Shift = 1,
         };
     }
     pub fn set_out_bitdepth_chroma(&mut self, bit_depth: u16) {
         self.out_mut().BitDepthChroma = bit_depth;
         match bit_depth {
-            8 => self.out_mut().Shift = 0,
+            0 | 8 => self.out_mut().Shift = 0,
             _ => self.out_mut().Shift = 1,
         };
     }
