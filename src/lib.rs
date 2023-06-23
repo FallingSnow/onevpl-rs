@@ -402,7 +402,7 @@ impl<'a> FrameSurface<'a> {
         let crop_height = unsafe { self.inner.Info.__bindgen_anon_1.__bindgen_anon_1.CropH };
 
         let length = match self.fourcc() {
-            FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize,
+            FourCC::Rgb4OrBgra | FourCC::BGR4 => crop_height as usize * pitch as usize,
             _ => unimplemented!(),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.B, length) }
@@ -744,7 +744,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::Y210 => wh * bit10 * 2,
             FourCC::AYUV => wh * 3,
             FourCC::Y410 => wh * bit10 * 3,
-            FourCC::Rgb4OrBgra => wh * 4,
+            FourCC::Rgb4OrBgra | FourCC::BGR4 => wh * 4,
             _ => todo!(),
         }
     }
