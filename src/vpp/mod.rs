@@ -272,7 +272,7 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
         let lib = get_library().unwrap();
         let session = session.inner.0;
 
-        let input_params = input_params.map(|p| &***p as *const as *mut _).unwrap_or(std::ptr::null_mut());
+        let input_params = input_params.map(|p| &***p as *const _ as *mut _).unwrap_or(std::ptr::null_mut());
 
         let mut params = VppVideoParams::default();
 
