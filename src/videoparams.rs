@@ -113,14 +113,6 @@ impl MfxVideoParams {
             .GopRefDist = ref_dist;
     }
 
-    pub fn set_bit_depth_luma(&mut self, depth: u16) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma = depth;
-    }
-
-    pub fn set_bit_depth_chroma(&mut self, depth: u16) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma = depth;
-    }
-
     #[doc = " Max number of all available reference frames (for AVC/HEVC, NumRefFrame defines DPB size). If NumRefFrame = 0, this parameter is not specified.\nSee also NumRefActiveP, NumRefActiveBL0, and NumRefActiveBL1 in the mfxExtCodingOption3 structure, which set a number of active references."]
     pub fn set_num_ref_frame(&mut self, num: u16) {
         (**self)
