@@ -59,9 +59,8 @@ impl<'a, 'b: 'a> VideoProcessor<'a, 'b> {
         Ok(decoder)
     }
 
-    pub async fn queue(&self,
-        frame: Option<&mut FrameSurface<'_>>,
-        timeout: Option<u32>,
+    pub fn queue(&self,
+        frame: Option<&mut FrameSurface<'_>>
     ) -> Result<FrameSurface, MfxStatus> {
         let start_time = Instant::now();
         let lib = get_library().unwrap();
