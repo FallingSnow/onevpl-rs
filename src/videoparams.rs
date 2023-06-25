@@ -1,5 +1,6 @@
 use intel_onevpl_sys as ffi;
 use std::{
+    fmt::Debug,
     mem,
     ops::{Deref, DerefMut},
 };
@@ -83,11 +84,15 @@ pub struct MfxVideoParams {
 }
 
 impl MfxVideoParams {
+    fn mfx(&self) -> &ffi::mfxInfoMFX {
+        unsafe { &self.__bindgen_anon_1.mfx }
+    }
+    fn mfx_mut(&mut self) -> &mut ffi::mfxInfoMFX {
+        unsafe { &mut self.__bindgen_anon_1.mfx }
+    }
     #[doc = "< Target usage model that guides the encoding process; see the TargetUsage enumerator for details."]
     pub fn set_target_usage(&mut self, usage: TargetUsage) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .TargetUsage = usage.repr() as u16;
@@ -95,9 +100,7 @@ impl MfxVideoParams {
 
     #[doc = " Number of pictures within the current GOP (Group of Pictures); if GopPicSize = 0, then the GOP size is unspecified. If GopPicSize = 1, only I-frames are used.\nThe following pseudo-code that shows how the library uses this parameter:\n@code\nmfxU16 get_gop_sequence (...) {\npos=display_frame_order;\nif (pos == 0)\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR | MFX_FRAMETYPE_REF;\n\nIf (GopPicSize == 1) // Only I-frames\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_REF;\n\nif (GopPicSize == 0)\nframeInGOP = pos;    //Unlimited GOP\nelse\nframeInGOP = pos%GopPicSize;\n\nif (frameInGOP == 0)\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_REF;\n\nif (GopRefDist == 1 || GopRefDist == 0)    // Only I,P frames\nreturn MFX_FRAMETYPE_P | MFX_FRAMETYPE_REF;\n\nframeInPattern = (frameInGOP-1)%GopRefDist;\nif (frameInPattern == GopRefDist - 1)\nreturn MFX_FRAMETYPE_P | MFX_FRAMETYPE_REF;\n\nreturn MFX_FRAMETYPE_B;\n}\n@endcode"]
     pub fn set_gop_pic_size(&mut self, size: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .GopPicSize = size;
@@ -105,9 +108,7 @@ impl MfxVideoParams {
 
     #[doc = " Distance between I- or P (or GPB) - key frames; if it is zero, the GOP structure is unspecified. Note: If GopRefDist = 1,\nthere are no regular B-frames used (only P or GPB); if mfxExtCodingOption3::GPB is ON, GPB frames (B without backward\nreferences) are used instead of P."]
     pub fn set_gop_ref_dist(&mut self, ref_dist: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .GopRefDist = ref_dist;
@@ -115,18 +116,14 @@ impl MfxVideoParams {
 
     #[doc = " Max number of all available reference frames (for AVC/HEVC, NumRefFrame defines DPB size). If NumRefFrame = 0, this parameter is not specified.\nSee also NumRefActiveP, NumRefActiveBL0, and NumRefActiveBL1 in the mfxExtCodingOption3 structure, which set a number of active references."]
     pub fn set_num_ref_frame(&mut self, num: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .NumRefFrame = num;
     }
 
     pub fn set_initial_delay_in_kb(&mut self, kilobytes: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_1
@@ -134,9 +131,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_qpi(&mut self, qpi: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_1
@@ -144,9 +139,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_target_kbps(&mut self, kbps: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_2
@@ -154,9 +147,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_max_kbps(&mut self, kbps: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_3
@@ -164,9 +155,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_qpp(&mut self, qpp: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_2
@@ -174,27 +163,21 @@ impl MfxVideoParams {
     }
 
     pub fn set_rate_control_method(&mut self, method: RateControlMethod) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .RateControlMethod = method.repr() as u16;
     }
 
     pub fn set_idr_interval(&mut self, interval: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .IdrInterval = interval;
     }
 
     pub fn set_encode_order(&mut self, order: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .EncodedOrder = order;
@@ -205,9 +188,7 @@ impl MfxVideoParams {
             quality >= 1 && quality <= 51,
             "tried to set ICQ quality {quality} outside of inclusive range 1-51"
         );
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .__bindgen_anon_1
             .__bindgen_anon_1
             .__bindgen_anon_2
@@ -215,45 +196,45 @@ impl MfxVideoParams {
     }
 
     pub fn set_framerate(&mut self, numerator: u32, denominator: u32) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.FrameRateExtN = numerator;
-        (**self).__bindgen_anon_1.mfx.FrameInfo.FrameRateExtD = denominator;
+        self.mfx_mut().FrameInfo.FrameRateExtN = numerator;
+        self.mfx_mut().FrameInfo.FrameRateExtD = denominator;
     }
 
     pub fn set_fourcc(&mut self, format: FourCC) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.FourCC = format.repr() as ffi::mfxU32;
+        self.mfx_mut().FrameInfo.FourCC = format.repr() as ffi::mfxU32;
     }
 
     pub fn set_chroma_format(&mut self, format: ChromaFormat) {
-        (**self).__bindgen_anon_1.mfx.FrameInfo.ChromaFormat = format.repr() as u16;
+        self.mfx_mut().FrameInfo.ChromaFormat = format.repr() as u16;
     }
 
     pub fn bitdepth_luma(&self) -> u16 {
-        unsafe {self.__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma}
+        self.mfx().FrameInfo.BitDepthLuma
     }
     pub fn set_bitdepth_luma(&mut self, bit_depth: u16) {
-        self.__bindgen_anon_1.mfx.FrameInfo.BitDepthLuma = bit_depth;
+        self.mfx_mut().FrameInfo.BitDepthLuma = bit_depth;
         match bit_depth {
-            8 => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 0,
-            _ => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 1,
+            8 => self.mfx_mut().FrameInfo.Shift = 0,
+            _ => self.mfx_mut().FrameInfo.Shift = 1,
         };
     }
     pub fn bitdepth_chroma(&self) -> u16 {
-        unsafe {self.__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma}
+        self.mfx().FrameInfo.BitDepthChroma
     }
     pub fn set_bitdepth_chroma(&mut self, bit_depth: u16) {
-        self.__bindgen_anon_1.mfx.FrameInfo.BitDepthChroma = bit_depth;
+        self.mfx_mut().FrameInfo.BitDepthChroma = bit_depth;
         match bit_depth {
-            8 => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 0,
-            _ => self.__bindgen_anon_1.mfx.FrameInfo.Shift = 1,
+            8 => self.mfx_mut().FrameInfo.Shift = 0,
+            _ => self.mfx_mut().FrameInfo.Shift = 1,
         };
     }
 
     pub fn codec(&self) -> Codec {
-        Codec::from_repr(unsafe { (**self).__bindgen_anon_1.mfx.CodecId } as ffi::_bindgen_ty_14)
+        Codec::from_repr(self.mfx().CodecId as ffi::_bindgen_ty_14)
             .unwrap()
     }
     pub fn set_codec(&mut self, codec: Codec) {
-        (**self).__bindgen_anon_1.mfx.CodecId = codec as u32;
+        self.mfx_mut().CodecId = codec as u32;
     }
 
     pub fn width(&self) -> u16 {
@@ -268,9 +249,7 @@ impl MfxVideoParams {
         }
     }
     pub fn set_width(&mut self, width: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .FrameInfo
             .__bindgen_anon_1
             .__bindgen_anon_1
@@ -289,9 +268,7 @@ impl MfxVideoParams {
         }
     }
     pub fn set_height(&mut self, height: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .FrameInfo
             .__bindgen_anon_1
             .__bindgen_anon_1
@@ -299,16 +276,12 @@ impl MfxVideoParams {
     }
 
     pub fn set_crop(&mut self, width: u16, height: u16) {
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .FrameInfo
             .__bindgen_anon_1
             .__bindgen_anon_1
             .CropW = width;
-        (**self)
-            .__bindgen_anon_1
-            .mfx
+        self.mfx_mut()
             .FrameInfo
             .__bindgen_anon_1
             .__bindgen_anon_1

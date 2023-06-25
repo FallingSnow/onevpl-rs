@@ -10,7 +10,7 @@ use std::{
 };
 
 use bitstream::Bitstream;
-use constants::{ApiVersion, FourCC, ImplementationType, IoPattern};
+use constants::{ApiVersion, FourCC, ImplementationType, IoPattern, PicStruct};
 use decode::Decoder;
 use encode::Encoder;
 pub use ffi::MfxStatus;
@@ -36,6 +36,7 @@ pub mod bitstream;
 pub mod constants;
 pub mod decode;
 pub mod encode;
+pub mod frameallocator;
 #[cfg(test)]
 mod tests;
 pub mod utils;
@@ -1290,5 +1291,135 @@ mod functional_tests {
         // TODO
         // accelHandle = InitAcceleratorHandle(session);
         // let accel_handle = null_mut();
+    }
+}
+
+#[derive(Debug)]
+pub struct FrameInfo {
+    inner: ffi::mfxFrameInfo,
+}
+
+impl FrameInfo {
+    #[doc = " The unique ID of each VPP channel set by application. It's required that during Init/Reset application fills ChannelId for\neach mfxVideoChannelParam provided by the application and the SDK sets it back to the correspondent\nmfxSurfaceArray::mfxFrameSurface1 to distinguish different channels. It's expected that surfaces for some channels might be\nreturned with some delay so application has to use mfxFrameInfo::ChannelId to distinguish what returned surface belongs to\nwhat VPP channel. Decoder's initialization parameters are always sent through channel with mfxFrameInfo::ChannelId equals to\nzero. It's allowed to skip setting of decoder's parameters for simplified decoding procedure"]
+    pub fn channel_id(&self) -> u16 {
+        self.inner.ChannelId
+    }
+    pub fn set_channel_id(&mut self, channel_id: u16) {
+        self.inner.ChannelId = channel_id;
+    }
+
+    #[doc = " Number of bits used to represent luma samples.\n@note Not all codecs and implementations support this value. Use the Query API function to check if this feature is supported."]
+    pub fn bit_depth_luma(&self) -> u16 {
+        self.inner.BitDepthLuma
+    }
+    pub fn set_bit_depth_luma(&mut self, bit_depth: u16) {
+        self.inner.BitDepthLuma = bit_depth;
+        match bit_depth {
+            0 | 8 => self.inner.Shift = 0,
+            _ => self.inner.Shift = 1,
+        };
+    }
+
+    #[doc = " Number of bits used to represent chroma samples.\n@note Not all codecs and implementations support this value. Use the Query API function to check if this feature is supported."]
+    pub fn bit_depth_chroma(&self) -> u16 {
+        self.inner.BitDepthChroma
+    }
+    pub fn set_bit_depth_chroma(&mut self, bit_depth: u16) {
+        self.inner.BitDepthChroma = bit_depth;
+        match bit_depth {
+            0 | 8 => self.inner.Shift = 0,
+            _ => self.inner.Shift = 1,
+        };
+    }
+
+    #[doc = " When the value is not zero, indicates that values of luma and chroma samples are shifted. Use BitDepthLuma and BitDepthChroma to calculate\nshift size. Use zero value to indicate absence of shift. See example data alignment below.\n\n@note Not all codecs and implementations support this value. Use the Query API  function to check if this feature is supported."]
+    pub fn shift(&self) -> u16 {
+        self.inner.Shift
+    }
+    pub fn set_shift(&mut self, shift: u16) {
+        self.inner.Shift = shift;
+    }
+
+    #[doc = "< Describes the view and layer of a frame picture."]
+    pub fn frame_id(&self) -> ffi::mfxFrameId {
+        self.inner.FrameId
+    }
+    pub fn set_frame_id(&mut self, frame_id: ffi::mfxFrameId) {
+        self.inner.FrameId = frame_id;
+    }
+
+    #[doc = "< FourCC code of the color format. See the ColorFourCC enumerator for details."]
+    pub fn fourcc(&self) -> Option<FourCC> {
+        FourCC::from_repr(self.inner.FourCC)
+    }
+    pub fn set_fourcc(&mut self, fourcc: &FourCC) {
+        self.inner.FourCC = fourcc.repr();
+    }
+
+    #[doc = "< Frame rate numerator."]
+    #[doc = "< Frame rate denominator."]
+    pub fn frame_rate(&self) -> (u32, u32) {
+        (self.inner.FrameRateExtN, self.inner.FrameRateExtD)
+    }
+    pub fn set_frame_rate(&mut self, numerator: u32, denominator: u32) {
+        self.inner.FrameRateExtN = numerator;
+        self.inner.FrameRateExtD = denominator;
+    }
+
+    #[doc = "< Aspect Ratio for width."]
+    #[doc = "< Aspect Ratio for height."]
+    pub fn aspect_ratio(&self) -> (u16, u16) {
+        (self.inner.AspectRatioW, self.inner.AspectRatioH)
+    }
+    pub fn set_aspect_ratio(&mut self, aspect_w: u16, aspect_h: u16) {
+        self.inner.AspectRatioW = aspect_w;
+        self.inner.AspectRatioH = aspect_h;
+    }
+
+    #[doc = "< Picture type as specified in the PicStruct enumerator."]
+    pub fn pic_struct(&self) -> Option<PicStruct> {
+        PicStruct::from_repr(self.inner.PicStruct.into())
+    }
+    pub fn set_pic_struct(&mut self, pic_struct: &PicStruct) {
+        self.inner.PicStruct = pic_struct.repr().try_into().unwrap();
+    }
+
+    #[doc = "< Picture type as specified in the PicStruct enumerator."]
+    pub fn chroma_format(&self) -> Option<ChromaFormat> {
+        ChromaFormat::from_repr(self.inner.ChromaFormat.into())
+    }
+    pub fn set_chroma_format(&mut self, chroma_format: &ChromaFormat) {
+        self.inner.ChromaFormat = chroma_format.repr().try_into().unwrap();
+    }
+
+    #[doc = "< Width of the video frame in pixels. Must be a multiple of 16."]
+    pub fn width(&self) -> u16 {
+        unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.Width }
+    }
+    pub fn set_width(&mut self, width: u16) {
+        self.inner.__bindgen_anon_1.__bindgen_anon_1.Width = width;
+    }
+
+    #[doc = "< Height of the video frame in pixels. Must be a multiple of 16 for progressive frame sequence and a multiple of 32 otherwise."]
+    pub fn height(&self) -> u16 {
+        unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.Height }
+    }
+    pub fn set_height(&mut self, height: u16) {
+        self.inner.__bindgen_anon_1.__bindgen_anon_1.Height = height;
+    }
+    
+    #[doc = "< Width in pixels."]
+    #[doc = "< Height in pixels."]
+    pub fn crop(&self) -> (u16, u16) {
+        unsafe {
+            (
+                self.inner.__bindgen_anon_1.__bindgen_anon_1.CropW,
+                self.inner.__bindgen_anon_1.__bindgen_anon_1.CropH,
+            )
+        }
+    }
+    pub fn set_crop(&mut self, width: u16, height: u16) {
+        self.inner.__bindgen_anon_1.__bindgen_anon_1.CropW = width;
+        self.inner.__bindgen_anon_1.__bindgen_anon_1.CropH = height;
     }
 }
