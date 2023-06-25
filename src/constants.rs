@@ -534,3 +534,9 @@ pub enum ExtMemFrameType {
     #[doc = "< Frames are in video memory and belong to video encoder render targets."]
     VideoMemoryEncoderTarget = ffi::MFX_MEMTYPE_VIDEO_MEMORY_ENCODER_TARGET,
 }
+
+/// Memory ID type.
+pub struct MemId(pub ffi::mfxHDL);
+
+/// Handle type.
+pub struct Handle(pub ffi::mfxHDL);
