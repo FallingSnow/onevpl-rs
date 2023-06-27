@@ -3,6 +3,7 @@
 # oneVPL
 oneVPL is Intel's replacement for intel-media-sdk.
 
+You should really only use this with intel hardware acceleration. The onevpl CPU runtime is End-of-Life.
 
 ## Features
 - [x] Software Encode

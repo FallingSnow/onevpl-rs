@@ -405,7 +405,7 @@ impl<'a> FrameSurface<'a> {
 
         let length = match self.fourcc() {
             FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize,
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.B, length) }
     }
@@ -418,7 +418,7 @@ impl<'a> FrameSurface<'a> {
 
         let length = match self.fourcc() {
             FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 1,
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_4.G, length) }
     }
@@ -431,7 +431,7 @@ impl<'a> FrameSurface<'a> {
 
         let length = match self.fourcc() {
             FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 2,
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_3.R, length) }
     }
@@ -444,7 +444,7 @@ impl<'a> FrameSurface<'a> {
 
         let length = match self.fourcc() {
             FourCC::Rgb4OrBgra => crop_height as usize * pitch as usize - 3,
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.A, length) }
     }
@@ -478,7 +478,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::I010 => todo!(),
             FourCC::I210 => todo!(),
             FourCC::I422 => todo!(),
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_3.Y, length) }
     }
@@ -511,7 +511,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::I010 => todo!(),
             FourCC::I210 => todo!(),
             FourCC::I422 => todo!(),
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_4.U, length) }
     }
@@ -544,7 +544,7 @@ impl<'a> FrameSurface<'a> {
             FourCC::I010 => todo!(),
             FourCC::I210 => todo!(),
             FourCC::I422 => todo!(),
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", self.fourcc()),
         };
         unsafe { std::slice::from_raw_parts_mut(self.inner.Data.__bindgen_anon_5.V, length) }
     }
