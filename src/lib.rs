@@ -1263,6 +1263,24 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
     Ok(get_library().unwrap())
 }
 
+/// Returns the number of detected graphics adapters.
+pub fn num_adapters() -> Result<u32, MfxStatus> {
+    let lib = get_library().unwrap();
+
+    let mut num = 0u32;
+
+    let status = unsafe {
+        lib.MFXQueryAdaptersNumber(&mut num)
+    }
+    .into();
+
+    if status != MfxStatus::NoneOrDone {
+        return Err(status);
+    }
+
+    Ok(num)
+}
+
 #[cfg(test)]
 mod functional_tests {
     use crate::constants::{ApiVersion, Codec, ImplementationType};
@@ -1442,3 +1460,4 @@ impl FrameInfo {
         self.inner.__bindgen_anon_1.__bindgen_anon_1.CropH = height;
     }
 }
+
