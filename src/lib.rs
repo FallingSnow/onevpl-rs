@@ -18,6 +18,7 @@ use ffi::{
     mfxConfig, mfxLoader, mfxSession, mfxStructVersion, mfxStructVersion__bindgen_ty_1, mfxU32,
     mfxVariant,
 };
+use frameallocator::FrameAllocator;
 use intel_onevpl_sys as ffi;
 
 use once_cell::sync::OnceCell;
@@ -1046,6 +1047,7 @@ impl Drop for AcceleratorHandle {
 #[derive(Debug)]
 pub struct Session<'a> {
     inner: SharedPtr<mfxSession>,
+    allocator: Option<FrameAllocator>,
     accelerator: Option<AcceleratorHandle>,
     phantom: PhantomData<&'a mfxSession>,
 }
@@ -1066,6 +1068,7 @@ impl<'a> Session<'a> {
 
         let session = Self {
             inner: SharedPtr(session),
+            allocator: None,
             accelerator: None,
             phantom: PhantomData,
         };
@@ -1076,6 +1079,22 @@ impl<'a> Session<'a> {
 
         // FIXME: accelerator should be passed through from the loader if it was already set
         Ok(session)
+    }
+
+    pub fn set_allocator(&mut self, mut allocator: FrameAllocator) -> Result<(), MfxStatus> {
+        let lib = get_library().unwrap();
+        let status = unsafe {
+            lib.MFXVideoCORE_SetFrameAllocator(self.inner.0, &mut allocator.inner)
+        }
+        .into();
+
+        if status != MfxStatus::NoneOrDone {
+            return Err(status);
+        }
+
+        self.allocator = Some(allocator);
+
+        Ok(())
     }
 
     // Get a new instances of a decoder tied to this session
