@@ -1387,10 +1387,10 @@ impl FrameInfo {
 
     #[doc = "< FourCC code of the color format. See the ColorFourCC enumerator for details."]
     pub fn fourcc(&self) -> Option<FourCC> {
-        FourCC::from_repr(self.inner.FourCC)
+        FourCC::from_repr(self.inner.FourCC.try_into().unwrap())
     }
     pub fn set_fourcc(&mut self, fourcc: &FourCC) {
-        self.inner.FourCC = fourcc.repr();
+        self.inner.FourCC = fourcc.repr().try_into().unwrap();
     }
 
     #[doc = "< Frame rate numerator."]
