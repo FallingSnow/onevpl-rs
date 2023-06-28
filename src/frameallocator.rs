@@ -172,9 +172,9 @@ impl FrameAllocRequest<'_> {
     pub fn num_frame_suggested(&self) -> u16 {
         self.inner.NumFrameSuggested
     }
-    pub fn info(&self) -> FrameInfo {
+    pub fn info(&mut self) -> FrameInfo {
         FrameInfo {
-            inner: self.inner.Info,
+            inner: &mut self.inner.Info,
         }
     }
     pub fn type_(&self) -> Option<ExtMemFrameType> {

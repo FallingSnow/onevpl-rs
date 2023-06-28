@@ -5,8 +5,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::constants::{
-    self, ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage,
+use crate::{
+    constants::{self, ChromaFormat, Codec, FourCC, IoPattern, RateControlMethod, TargetUsage},
+    FrameInfo,
 };
 
 #[derive(Clone, Debug)]
@@ -84,6 +85,11 @@ pub struct MfxVideoParams {
 }
 
 impl MfxVideoParams {
+    pub fn info(&mut self) -> FrameInfo {
+        FrameInfo {
+            inner: unsafe { &mut self.inner.__bindgen_anon_1.mfx.FrameInfo },
+        }
+    }
     fn mfx(&self) -> &ffi::mfxInfoMFX {
         unsafe { &self.__bindgen_anon_1.mfx }
     }
@@ -92,34 +98,22 @@ impl MfxVideoParams {
     }
     #[doc = "< Target usage model that guides the encoding process; see the TargetUsage enumerator for details."]
     pub fn set_target_usage(&mut self, usage: TargetUsage) {
-        self.mfx_mut()
-            .__bindgen_anon_1
-            .__bindgen_anon_1
-            .TargetUsage = usage.repr() as u16;
+        self.mfx_mut().__bindgen_anon_1.__bindgen_anon_1.TargetUsage = usage.repr() as u16;
     }
 
     #[doc = " Number of pictures within the current GOP (Group of Pictures); if GopPicSize = 0, then the GOP size is unspecified. If GopPicSize = 1, only I-frames are used.\nThe following pseudo-code that shows how the library uses this parameter:\n@code\nmfxU16 get_gop_sequence (...) {\npos=display_frame_order;\nif (pos == 0)\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR | MFX_FRAMETYPE_REF;\n\nIf (GopPicSize == 1) // Only I-frames\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_REF;\n\nif (GopPicSize == 0)\nframeInGOP = pos;    //Unlimited GOP\nelse\nframeInGOP = pos%GopPicSize;\n\nif (frameInGOP == 0)\nreturn MFX_FRAMETYPE_I | MFX_FRAMETYPE_REF;\n\nif (GopRefDist == 1 || GopRefDist == 0)    // Only I,P frames\nreturn MFX_FRAMETYPE_P | MFX_FRAMETYPE_REF;\n\nframeInPattern = (frameInGOP-1)%GopRefDist;\nif (frameInPattern == GopRefDist - 1)\nreturn MFX_FRAMETYPE_P | MFX_FRAMETYPE_REF;\n\nreturn MFX_FRAMETYPE_B;\n}\n@endcode"]
     pub fn set_gop_pic_size(&mut self, size: u16) {
-        self.mfx_mut()
-            .__bindgen_anon_1
-            .__bindgen_anon_1
-            .GopPicSize = size;
+        self.mfx_mut().__bindgen_anon_1.__bindgen_anon_1.GopPicSize = size;
     }
 
     #[doc = " Distance between I- or P (or GPB) - key frames; if it is zero, the GOP structure is unspecified. Note: If GopRefDist = 1,\nthere are no regular B-frames used (only P or GPB); if mfxExtCodingOption3::GPB is ON, GPB frames (B without backward\nreferences) are used instead of P."]
     pub fn set_gop_ref_dist(&mut self, ref_dist: u16) {
-        self.mfx_mut()
-            .__bindgen_anon_1
-            .__bindgen_anon_1
-            .GopRefDist = ref_dist;
+        self.mfx_mut().__bindgen_anon_1.__bindgen_anon_1.GopRefDist = ref_dist;
     }
 
     #[doc = " Max number of all available reference frames (for AVC/HEVC, NumRefFrame defines DPB size). If NumRefFrame = 0, this parameter is not specified.\nSee also NumRefActiveP, NumRefActiveBL0, and NumRefActiveBL1 in the mfxExtCodingOption3 structure, which set a number of active references."]
     pub fn set_num_ref_frame(&mut self, num: u16) {
-        self.mfx_mut()
-            .__bindgen_anon_1
-            .__bindgen_anon_1
-            .NumRefFrame = num;
+        self.mfx_mut().__bindgen_anon_1.__bindgen_anon_1.NumRefFrame = num;
     }
 
     pub fn set_initial_delay_in_kb(&mut self, kilobytes: u16) {
@@ -170,10 +164,7 @@ impl MfxVideoParams {
     }
 
     pub fn set_idr_interval(&mut self, interval: u16) {
-        self.mfx_mut()
-            .__bindgen_anon_1
-            .__bindgen_anon_1
-            .IdrInterval = interval;
+        self.mfx_mut().__bindgen_anon_1.__bindgen_anon_1.IdrInterval = interval;
     }
 
     pub fn set_encode_order(&mut self, order: u16) {
@@ -230,8 +221,7 @@ impl MfxVideoParams {
     }
 
     pub fn codec(&self) -> Codec {
-        Codec::from_repr(self.mfx().CodecId as ffi::_bindgen_ty_14)
-            .unwrap()
+        Codec::from_repr(self.mfx().CodecId as ffi::_bindgen_ty_14).unwrap()
     }
     pub fn set_codec(&mut self, codec: Codec) {
         self.mfx_mut().CodecId = codec as u32;

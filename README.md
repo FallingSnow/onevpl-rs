@@ -15,6 +15,7 @@ You should really only use this with intel hardware acceleration. The onevpl CPU
 - [ ] Advanced Video Post/Pre Processing (VPP)
     - Sharpening, Denoise, Rotate, etc.
 - [ ] External Frame Allocator (Use your own buffers)
+- [ ] Legacy API
 
 ## Dependencies
 Building bindings requires clang to be installed.

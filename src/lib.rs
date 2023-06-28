@@ -112,19 +112,27 @@ impl Loader {
     }
 
     // TODO: Finish, already works, just need to iterate over implementations and return them
-    pub fn implementations(&mut self) -> Result<Vec<()>, MfxStatus> {
+    pub fn implementations(
+        &self,
+    ) -> Result<Vec<ImplDescription<'_>>, MfxStatus> {
         use std::ptr::null_mut;
         let mut caps = null_mut();
         let format = constants::ImplementationCapabilitiesDeliverFormat::Description;
-        let mut i = 0;
         let mut status = MfxStatus::NoneOrDone;
-        let implementations = Vec::new();
+        let mut implementations = Vec::new();
 
         let lib = get_library().unwrap();
 
         while status == MfxStatus::NoneOrDone {
-            status = unsafe { lib.MFXEnumImplementations(self.inner, i, format.repr(), &mut caps) }
-                .into();
+            status = unsafe {
+                lib.MFXEnumImplementations(
+                    self.inner,
+                    implementations.len().try_into().unwrap(),
+                    format.repr(),
+                    &mut caps,
+                )
+            }
+            .into();
 
             if status == MfxStatus::NotFound {
                 break;
@@ -132,25 +140,16 @@ impl Loader {
             if status != MfxStatus::NoneOrDone {
                 return Err(status);
             }
-            let raw_description = unsafe {
-                mem::transmute::<*mut c_void, *const ffi::mfxImplDescription>(caps)
-                    .as_ref()
-                    .unwrap()
-            };
 
-            dbg!(
-                unsafe { str_from_null_terminated_utf8_i8(&raw_description.ImplName) }.to_string()
-            );
-            dbg!(unsafe { str_from_null_terminated_utf8_i8(&raw_description.License) }.to_string());
-            dbg!(
-                unsafe { str_from_null_terminated_utf8_i8(&raw_description.Keywords) }.to_string()
-            );
-            i += 1;
+            let impl_description = unsafe { ImplDescription::from(&self, caps) };
+
+            implementations.push(impl_description);
         }
 
         return Ok(implementations);
     }
 
+    /// Instructs the loader only to look for hardware based implementations
     pub fn use_hardware(&mut self, yes: bool) {
         let value = match yes {
             true => constants::ImplementationType::HARDWARE,
@@ -173,6 +172,42 @@ impl Drop for Loader {
     fn drop(&mut self) {
         let lib = get_library().unwrap();
         unsafe { lib.MFXUnload(self.inner) };
+    }
+}
+
+#[derive(Debug)]
+pub struct ImplDescription<'a> {
+    loader: &'a Loader,
+    inner: *mut ffi::mfxImplDescription,
+}
+
+impl<'a> ImplDescription<'a> {
+    pub(crate) unsafe fn from(loader: &'a Loader, value: *mut c_void) -> Self {
+        let raw = mem::transmute::<*mut c_void, *mut ffi::mfxImplDescription>(value);
+
+        Self { loader, inner: raw }
+    }
+    pub fn name(&self) -> &str {
+        unsafe { str_from_null_terminated_utf8_i8(&(*self.inner).ImplName) }
+    }
+    pub fn license(&self) -> &str {
+        unsafe { str_from_null_terminated_utf8_i8(&(*self.inner).License) }
+    }
+    pub fn keywords(&self) -> &str {
+        unsafe { str_from_null_terminated_utf8_i8(&(*self.inner).Keywords) }
+    }
+}
+
+impl Drop for ImplDescription<'_> {
+    fn drop(&mut self) {
+        let lib = get_library().unwrap();
+
+        unsafe {
+            lib.MFXDispReleaseImplDescription(
+                self.loader.inner,
+                self.inner as *mut _ as *mut c_void,
+            )
+        };
     }
 }
 
@@ -1083,10 +1118,9 @@ impl<'a> Session<'a> {
 
     pub fn set_allocator(&mut self, mut allocator: FrameAllocator) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
-        let status = unsafe {
-            lib.MFXVideoCORE_SetFrameAllocator(self.inner.0, &mut allocator.inner)
-        }
-        .into();
+        let status =
+            unsafe { lib.MFXVideoCORE_SetFrameAllocator(self.inner.0, &mut allocator.inner) }
+                .into();
 
         if status != MfxStatus::NoneOrDone {
             return Err(status);
@@ -1269,10 +1303,7 @@ pub fn num_adapters() -> Result<u32, MfxStatus> {
 
     let mut num = 0u32;
 
-    let status = unsafe {
-        lib.MFXQueryAdaptersNumber(&mut num)
-    }
-    .into();
+    let status = unsafe { lib.MFXQueryAdaptersNumber(&mut num) }.into();
 
     if status != MfxStatus::NoneOrDone {
         return Err(status);
@@ -1332,11 +1363,11 @@ mod functional_tests {
 }
 
 #[derive(Debug)]
-pub struct FrameInfo {
-    inner: ffi::mfxFrameInfo,
+pub struct FrameInfo<'a> {
+    inner: &'a mut ffi::mfxFrameInfo,
 }
 
-impl FrameInfo {
+impl FrameInfo<'_> {
     #[doc = " The unique ID of each VPP channel set by application. It's required that during Init/Reset application fills ChannelId for\neach mfxVideoChannelParam provided by the application and the SDK sets it back to the correspondent\nmfxSurfaceArray::mfxFrameSurface1 to distinguish different channels. It's expected that surfaces for some channels might be\nreturned with some delay so application has to use mfxFrameInfo::ChannelId to distinguish what returned surface belongs to\nwhat VPP channel. Decoder's initialization parameters are always sent through channel with mfxFrameInfo::ChannelId equals to\nzero. It's allowed to skip setting of decoder's parameters for simplified decoding procedure"]
     pub fn channel_id(&self) -> u16 {
         self.inner.ChannelId
@@ -1444,7 +1475,7 @@ impl FrameInfo {
     pub fn set_height(&mut self, height: u16) {
         self.inner.__bindgen_anon_1.__bindgen_anon_1.Height = height;
     }
-    
+
     #[doc = "< Width in pixels."]
     #[doc = "< Height in pixels."]
     pub fn crop(&self) -> (u16, u16) {
@@ -1460,4 +1491,3 @@ impl FrameInfo {
         self.inner.__bindgen_anon_1.__bindgen_anon_1.CropH = height;
     }
 }
-
