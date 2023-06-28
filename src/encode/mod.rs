@@ -230,6 +230,34 @@ impl<'a, 'b: 'a> Encoder<'a, 'b> {
 
         Ok(params)
     }
+
+    /// Verifies encoder support for specified parameters.
+    ///
+    /// See
+    /// https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_func_vid_encode.html#mfxvideoencode-query
+    /// for more info.
+    pub fn query(
+        session: &Session,
+        input_params: Option<&MfxVideoParams>,
+    ) -> Result<MfxVideoParams, (MfxStatus, MfxVideoParams)> {
+        let lib = get_library().unwrap();
+        let session = session.inner.0;
+
+        let input_params = input_params.map(|p| &***p as *const _ as *mut _).unwrap_or(std::ptr::null_mut());
+
+        let mut params = MfxVideoParams::default();
+
+        let status: MfxStatus =
+            unsafe { lib.MFXVideoENCODE_Query(session, input_params, &mut **params) }.into();
+
+        trace!("Encoder query = {:?}", status);
+
+        if status != MfxStatus::NoneOrDone {
+            return Err((status, params));
+        }
+
+        Ok(params)
+    }
 }
 
 impl Drop for Encoder<'_, '_> {

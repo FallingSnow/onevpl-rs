@@ -496,3 +496,47 @@ pub enum ContentInfo {
     FullScreenVideo = ffi::MFX_CONTENT_FULL_SCREEN_VIDEO,
     NonVideoScreen = ffi::MFX_CONTENT_NON_VIDEO_SCREEN,
 }
+
+#[derive(Debug)]
+#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
+#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[doc = "The ExtMemFrameType enumerator specifies the memory type of frame. It is a bit-ORed value of the following.\n\\verbatim embed:rst\nFor information on working with video memory surfaces, see the :ref:`Working with Hardware Acceleration section<hw-acceleration>`.\n\\endverbatim"]
+pub enum ExtMemFrameType {
+    #[doc = "< Memory page for persistent use."]
+    #[doc = "< Allocation request for I/O frames"]
+    PersistentMemoryOrExternalFrame = ffi::MFX_MEMTYPE_PERSISTENT_MEMORY,
+    #[doc = "< Frames are in video memory and belong to video processor render targets."]
+    #[doc = "< Frames are in video memory and belong to video decoder render targets."]
+    DXVA2DecoderTargetOrVideoMemoryDecoderTarget = ffi::MFX_MEMTYPE_DXVA2_DECODER_TARGET,
+    #[doc = "< Frames are in video memory and belong to video processor render targets."]
+    #[doc = "< Frames are in video memory and belong to video decoder render targets."]
+    DXVA2ProcessorTargetOrVideoMemoryProcessorTarget = ffi::MFX_MEMTYPE_DXVA2_PROCESSOR_TARGET,
+    #[doc = "< The frames are in system memory."]
+    SystemMemory = ffi::MFX_MEMTYPE_SYSTEM_MEMORY,
+    #[doc = "<"]
+    Reserved1 = ffi::MFX_MEMTYPE_RESERVED1,
+    #[doc = "< Allocation request comes from an ENCODE function"]
+    FromEncode = ffi::MFX_MEMTYPE_FROM_ENCODE,
+    #[doc = "< Allocation request comes from a DECODE function"]
+    FromDecode = ffi::MFX_MEMTYPE_FROM_DECODE,
+    #[doc = "< Allocation request comes from a VPP function for input frame allocation"]
+    FromVppIn = ffi::MFX_MEMTYPE_FROM_VPPIN,
+    #[doc = "< Allocation request comes from a VPP function for output frame allocation"]
+    FromVppOut = ffi::MFX_MEMTYPE_FROM_VPPOUT,
+    #[doc = "< Allocation request comes from an ENC function"]
+    FromEnc = ffi::MFX_MEMTYPE_FROM_ENC,
+    FromPak = ffi::MFX_MEMTYPE_FROM_PAK,
+    #[doc = "< Allocation request for internal frames"]
+    InternalFrame = ffi::MFX_MEMTYPE_INTERNAL_FRAME,
+    #[doc = "< Application requests frame handle export to some associated object. For Linux frame handle can be\nconsidered to be exported to DRM Prime FD, DRM FLink or DRM FrameBuffer Handle. Specifics of export\ntypes and export procedure depends on external frame allocator implementation"]
+    ExportFrameOrSharedResource = ffi::MFX_MEMTYPE_EXPORT_FRAME,
+    #[doc = "< For DX11 allocation use shared resource bind flag."]
+    #[doc = "< Frames are in video memory and belong to video encoder render targets."]
+    VideoMemoryEncoderTarget = ffi::MFX_MEMTYPE_VIDEO_MEMORY_ENCODER_TARGET,
+}
+
+/// Memory ID type.
+pub struct MemId(pub ffi::mfxHDL);
+
+/// Handle type.
+pub struct Handle(pub ffi::mfxHDL);

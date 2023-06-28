@@ -3,6 +3,7 @@
 # oneVPL
 oneVPL is Intel's replacement for intel-media-sdk.
 
+You should really only use this with intel hardware acceleration. The onevpl CPU runtime is End-of-Life.
 
 ## Features
 - [x] Software Encode
@@ -13,7 +14,7 @@ oneVPL is Intel's replacement for intel-media-sdk.
     - Color space conversion, Crop
 - [ ] Advanced Video Post/Pre Processing (VPP)
     - Sharpening, Denoise, Rotate, etc.
-- [ ] Copy-free (Use your own buffers)
+- [ ] External Frame Allocator (Use your own buffers)
 
 ## Dependencies
 Building bindings requires clang to be installed.
