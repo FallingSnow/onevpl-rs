@@ -28,3 +28,4 @@ tracing-subscriber = "0.3.16"
 tracing-test = "0.2.4"
 sha2 = "0.10.6"
 hex-literal = "0.4.1"
+trycmd = { version = "0.14.16", features = ["examples"] }

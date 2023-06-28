@@ -1,0 +1,4 @@
+```console
+$ encode_file
+
+```
