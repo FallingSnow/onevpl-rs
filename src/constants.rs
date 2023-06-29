@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use bitflags::bitflags;
 use enum_repr::EnumRepr;
 use intel_onevpl_sys as ffi;
@@ -320,7 +318,7 @@ impl Into<FilterProperty> for ApiVersion {
     }
 }
 
-impl Debug for ApiVersion {
+impl std::fmt::Debug for ApiVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("ApiVersion")
             .field(&self.major())
@@ -351,22 +349,22 @@ pub struct Implementation {
     #[doc = "< Vendor specific number with given implementation ID."]
     pub vendor_implementation_id: ffi::mfxU32,
     #[doc = "< Supported device."]
-    pub dev: (), // TODO: mfxDeviceDescription,
+    pub dev: [u8; std::mem::size_of::<ffi::mfxDeviceDescription>()], // TODO: mfxDeviceDescription,
     #[doc = "< Decoder configuration."]
-    pub dec: (), // TODO: mfxDecoderDescription,
+    pub dec: [u8; std::mem::size_of::<ffi::mfxDecoderDescription>()], // TODO: mfxDecoderDescription,
     #[doc = "< Encoder configuration."]
-    pub enc: (), // TODO: mfxEncoderDescription,
+    pub enc: [u8; std::mem::size_of::<ffi::mfxEncoderDescription>()], // TODO: mfxEncoderDescription,
     #[doc = "< VPP configuration."]
-    pub vpp: (), // TODO: mfxVPPDescription,
-    pub __bindgen_anon_1: (), // TODO: mfxImplDescription__bindgen_ty_1,
+    pub vpp: [u8; std::mem::size_of::<ffi::mfxVPPDescription>()], // TODO: mfxVPPDescription,
+    pub __bindgen_anon_1: [u8; std::mem::size_of::<ffi::mfxImplDescription__bindgen_ty_1>()], // TODO: mfxImplDescription__bindgen_ty_1,
     #[doc = "< Supported surface pool polices."]
-    pub pool_policies: (), // TODO: mfxPoolPolicyDescription,
+    pub pool_policies: [u8; std::mem::size_of::<ffi::mfxPoolPolicyDescription>()], // TODO: mfxPoolPolicyDescription,
     #[doc = "< Reserved for future use."]
     pub reserved: [ffi::mfxU32; 8usize],
     #[doc = "< Number of extension buffers. Reserved for future use. Must be 0."]
     pub num_ext_param: ffi::mfxU32,
     #[doc = "< Extension buffers. Reserved for future."]
-    pub ext_params: (), // TODO: mfxImplDescription__bindgen_ty_2,
+    pub ext_params: [u8; std::mem::size_of::<ffi::mfxImplDescription__bindgen_ty_2>()], // TODO: mfxImplDescription__bindgen_ty_2,
 }
 
 bitflags! {
@@ -377,6 +375,39 @@ bitflags! {
         #[doc = "< Hardware Accelerated Implementation."]
         const HARDWARE = ffi::mfxImplType_MFX_IMPL_TYPE_HARDWARE;
     }
+}
+
+#[bitmask_enum::bitmask(i32)]
+#[doc = "This enumerator itemizes implementation types.\nThe implementation type is a bit OR'ed value of the base type and any decorative flags.\n@note This enumerator is for legacy dispatcher compatibility only. The new dispatcher does not use it."]
+pub enum MfxImpl {
+    #[doc = "< Auto Selection/In or Not Supported/Out."]
+    Auto = ffi::MFX_IMPL_AUTO,
+    #[doc = "< Pure software implementation."]
+    Software = ffi::MFX_IMPL_SOFTWARE,
+    #[doc = "< Hardware accelerated implementation (default device)."]
+    Hardware = ffi::MFX_IMPL_HARDWARE,
+    #[doc = "< Auto selection of any hardware/software implementation."]
+    Any = ffi::MFX_IMPL_AUTO_ANY,
+    #[doc = "< Auto selection of any hardware implementation."]
+    AnyHardware = ffi::MFX_IMPL_HARDWARE_ANY,
+    #[doc = "< Hardware accelerated implementation (2nd device)."]
+    Hardware2 = ffi::MFX_IMPL_HARDWARE2,
+    #[doc = "< Hardware accelerated implementation (3rd device)."]
+    Hardware3 = ffi::MFX_IMPL_HARDWARE3,
+    #[doc = "< Hardware accelerated implementation (4th device)."]
+    Hardware4 = ffi::MFX_IMPL_HARDWARE4,
+    #[doc = "< This value cannot be used for session initialization. It may be returned by the MFXQueryIMPL\nfunction to show that the session has been initialized in run-time mode."]
+    Runtime = ffi::MFX_IMPL_RUNTIME,
+    #[doc = "< Hardware acceleration can go through any supported OS infrastructure. This is the default value. The default value\nis used by the legacy Intel(r) Media SDK if none of the MFX_IMPL_VIA_xxx flags are specified by the application."]
+    ViaAny = ffi::MFX_IMPL_VIA_ANY,
+    #[doc = "< Hardware acceleration goes through the Microsoft* Direct3D* 9 infrastructure."]
+    ViaD3D9 = ffi::MFX_IMPL_VIA_D3D9,
+    #[doc = "< Hardware acceleration goes through the Microsoft* Direct3D* 11 infrastructure."]
+    ViaD3D11 = ffi::MFX_IMPL_VIA_D3D11,
+    #[doc = "< Hardware acceleration goes through the Linux* VA-API infrastructure."]
+    ViaVaapi = ffi::MFX_IMPL_VIA_VAAPI,
+    #[doc = "< Hardware acceleration goes through the HDDL* Unite*."]
+    ViaHddlUnite = ffi::MFX_IMPL_VIA_HDDLUNITE,
 }
 
 impl Into<FilterProperty> for ImplementationType {

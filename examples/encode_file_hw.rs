@@ -1,12 +1,14 @@
 ///! This example encodes a yuv file (tests/frozen180.yuv) and produces a HEVC YUV 4:2:0 8 bit file at /tmp/output.hevc
-use std::{path::PathBuf, env};
+use std::{env, path::PathBuf};
 
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{
     bitstream::Bitstream,
-    constants::{self, IoPattern, FourCC},
+    constants::{self, FourCC, IoPattern},
     encode::EncodeCtrl,
-    Loader, MfxVideoParams, vpp::VppVideoParams, utils::{hw_align_height, hw_align_width},
+    utils::{hw_align_height, hw_align_width},
+    vpp::VppVideoParams,
+    Loader, MfxVideoParams,
 };
 
 #[tokio::main]
@@ -32,23 +34,11 @@ pub async fn main() {
     // Set hardware decoding
     loader.use_hardware(true);
 
-    // Set decode HEVC
-    loader
-        .set_filter_property(
-            "mfxImplDescription.mfxEncoderDescription.encoder.CodecID",
-            codec,
-            None,
-        )
-        .unwrap();
+    // Require a implementation that can encode HEVC
+    loader.require_encoder(codec);
 
     // Set required API version to 2.2
-    loader
-        .set_filter_property(
-            "mfxImplDescription.ApiVersion.Version",
-            constants::ApiVersion::new(2, 2),
-            None,
-        )
-        .unwrap();
+    loader.use_api_version(2, 2);
 
     let session = loader.new_session(0).unwrap();
 
@@ -88,7 +78,7 @@ pub async fn main() {
     vpp_params.set_in_width(hw_width);
     vpp_params.set_in_crop(0, 0, width, height);
     vpp_params.set_in_framerate(24000, 1001);
-    
+
     vpp_params.set_out_fourcc(FourCC::NV12);
     vpp_params.set_out_picstruct(constants::PicStruct::Progressive);
     vpp_params.set_out_height(hw_height);
@@ -108,7 +98,10 @@ pub async fn main() {
         let mut ctrl = EncodeCtrl::new();
 
         let mut frame_surface = vpp.get_surface_input().unwrap();
-        if let Err(e) = frame_surface.read_raw_frame(&mut file, constants::FourCC::IyuvOrI420).await {
+        if let Err(e) = frame_surface
+            .read_raw_frame(&mut file, constants::FourCC::IyuvOrI420)
+            .await
+        {
             match e {
                 MfxStatus::MoreData => break,
                 _ => panic!("{:?}", e),

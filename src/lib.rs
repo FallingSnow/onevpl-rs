@@ -10,7 +10,7 @@ use std::{
 };
 
 use bitstream::Bitstream;
-use constants::{ApiVersion, FourCC, ImplementationType, IoPattern, PicStruct};
+use constants::{ApiVersion, FourCC, IoPattern, PicStruct, Codec, MfxImpl};
 use decode::Decoder;
 use encode::Encoder;
 pub use ffi::MfxStatus;
@@ -107,11 +107,12 @@ impl Loader {
         value: impl Into<utils::FilterProperty>,
         version: Option<mfxStructVersion>,
     ) -> Result<(), MfxStatus> {
+        let value = value.into();
+        trace!("Set config option {}={:?}", name, &value);
         let config = self.new_config()?;
         config.set_filter_property(name, value, version)
     }
 
-    // TODO: Finish, already works, just need to iterate over implementations and return them
     pub fn implementations(
         &self,
     ) -> Result<Vec<ImplDescription<'_>>, MfxStatus> {
@@ -157,6 +158,33 @@ impl Loader {
         };
         self.set_filter_property("mfxImplDescription.Impl", value, None)
             .unwrap();
+    }
+    pub fn use_api_version(&mut self, major: u16, minor: u16) {
+        self
+        .set_filter_property(
+            "mfxImplDescription.ApiVersion.Version",
+            constants::ApiVersion::new(major, minor),
+            None,
+        )
+        .unwrap();
+    }
+    pub fn require_decoder(&mut self, codec: Codec) {
+        self
+        .set_filter_property(
+            "mfxImplDescription.mfxEncoderDescription.decoder.CodecID",
+            codec,
+            None,
+        )
+        .unwrap();
+    }
+    pub fn require_encoder(&mut self, codec: Codec) {
+        self
+        .set_filter_property(
+            "mfxImplDescription.mfxEncoderDescription.encoder.CodecID",
+            codec,
+            None,
+        )
+        .unwrap();
     }
 }
 
@@ -1192,7 +1220,7 @@ impl<'a> Session<'a> {
         Ok(params)
     }
 
-    pub fn implementation(&self) -> Result<ImplementationType, MfxStatus> {
+    pub fn implementation(&self) -> Result<MfxImpl, MfxStatus> {
         let lib = get_library().unwrap();
 
         let mut implementation = 0i32;
@@ -1207,7 +1235,7 @@ impl<'a> Session<'a> {
         }
 
         let implementation =
-            ImplementationType::from_bits_truncate(implementation as ffi::mfxImplType);
+            MfxImpl::try_from(implementation as ffi::mfxImplType).unwrap();
 
         Ok(implementation)
     }
