@@ -171,7 +171,7 @@ impl Loader {
     pub fn require_decoder(&mut self, codec: Codec) {
         self
         .set_filter_property(
-            "mfxImplDescription.mfxEncoderDescription.decoder.CodecID",
+            "mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
             codec,
             None,
         )
