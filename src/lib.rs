@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
@@ -734,7 +735,7 @@ impl<'a> FrameSurface<'a> {
         Ok(())
     }
 
-    /// Reads a single frame in the given pixel format. Unfortunately you need to pass the width and height of the frame because the frame's internal size is unreliable.
+    /// Reads a single frame in the given pixel format.
     pub async fn read_raw_frame<R: Read>(
         &mut self,
         source: &mut R,
@@ -1110,10 +1111,13 @@ impl Drop for AcceleratorHandle {
 #[derive(Debug)]
 pub struct Session<'a> {
     inner: SharedPtr<mfxSession>,
-    allocator: Option<FrameAllocator>,
+    allocator: Option<FrameAllocator<'a>>,
     accelerator: Option<AcceleratorHandle>,
     phantom: PhantomData<&'a mfxSession>,
 }
+
+// FIXME: The frame allocator alone is not send or sync, this is dangerous
+// The session might be, pretty sure the AcceleratorHandle isn't specifically Send/Sync though
 unsafe impl Send for Session<'_> {}
 unsafe impl Sync for Session<'_> {}
 
@@ -1144,7 +1148,7 @@ impl<'a> Session<'a> {
         Ok(session)
     }
 
-    pub fn set_allocator(&mut self, mut allocator: FrameAllocator) -> Result<(), MfxStatus> {
+    pub fn set_allocator(&mut self, mut allocator: FrameAllocator<'a>) -> Result<(), MfxStatus> {
         let lib = get_library().unwrap();
         let status =
             unsafe { lib.MFXVideoCORE_SetFrameAllocator(self.inner.0, &mut allocator.inner) }
@@ -1153,6 +1157,8 @@ impl<'a> Session<'a> {
         if status != MfxStatus::NoneOrDone {
             return Err(status);
         }
+
+        trace!("Set allocator = {:?}", status);
 
         self.allocator = Some(allocator);
 
@@ -1300,6 +1306,8 @@ impl Drop for Session<'_> {
     }
 }
 
+// FIXME: This function is not sync, calling this function from multiple threads at the same time results in a race condition
+// Might be able to fix this with an RWLock
 pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
     if let Some(vpl) = LIBRARY.get() {
         return Ok(vpl);
@@ -1307,7 +1315,6 @@ pub fn get_library() -> Result<&'static ffi::vpl, libloading::Error> {
 
     #[cfg(target_os = "windows")]
     let library_name = "libvpl";
-    // let lib = unsafe { ffi::vpl::new(PathBuf::from("C:/Program Files (x86)/Intel/oneAPI/vpl/latest/bin/libvpl.dll")) }?;
     #[cfg(target_os = "linux")]
     let library_name = "vpl";
     let lib = {
@@ -1384,18 +1391,114 @@ mod functional_tests {
 
         let _session = loader.new_session(0).unwrap();
 
-        // TODO
-        // accelHandle = InitAcceleratorHandle(session);
-        // let accel_handle = null_mut();
+    }
+}
+
+pub struct FrameInfo<'a> {
+    inner: &'a ffi::mfxFrameInfo,
+}
+
+impl FrameInfo<'_> {
+    #[doc = " The unique ID of each VPP channel set by application. It's required that during Init/Reset application fills ChannelId for\neach mfxVideoChannelParam provided by the application and the SDK sets it back to the correspondent\nmfxSurfaceArray::mfxFrameSurface1 to distinguish different channels. It's expected that surfaces for some channels might be\nreturned with some delay so application has to use mfxFrameInfo::ChannelId to distinguish what returned surface belongs to\nwhat VPP channel. Decoder's initialization parameters are always sent through channel with mfxFrameInfo::ChannelId equals to\nzero. It's allowed to skip setting of decoder's parameters for simplified decoding procedure"]
+    pub fn channel_id(&self) -> u16 {
+        self.inner.ChannelId
+    }
+
+    #[doc = " Number of bits used to represent luma samples.\n@note Not all codecs and implementations support this value. Use the Query API function to check if this feature is supported."]
+    pub fn bit_depth_luma(&self) -> u16 {
+        self.inner.BitDepthLuma
+    }
+
+    #[doc = " Number of bits used to represent chroma samples.\n@note Not all codecs and implementations support this value. Use the Query API function to check if this feature is supported."]
+    pub fn bit_depth_chroma(&self) -> u16 {
+        self.inner.BitDepthChroma
+    }
+
+    #[doc = " When the value is not zero, indicates that values of luma and chroma samples are shifted. Use BitDepthLuma and BitDepthChroma to calculate\nshift size. Use zero value to indicate absence of shift. See example data alignment below.\n\n@note Not all codecs and implementations support this value. Use the Query API  function to check if this feature is supported."]
+    pub fn shift(&self) -> u16 {
+        self.inner.Shift
+    }
+
+    #[doc = "< Describes the view and layer of a frame picture."]
+    pub fn frame_id(&self) -> ffi::mfxFrameId {
+        self.inner.FrameId
+    }
+
+    #[doc = "< FourCC code of the color format. See the ColorFourCC enumerator for details."]
+    pub fn fourcc(&self) -> Option<FourCC> {
+        FourCC::from_repr(self.inner.FourCC.try_into().unwrap())
+    }
+
+    #[doc = "< Frame rate numerator."]
+    #[doc = "< Frame rate denominator."]
+    pub fn frame_rate(&self) -> (u32, u32) {
+        (self.inner.FrameRateExtN, self.inner.FrameRateExtD)
+    }
+
+    #[doc = "< Aspect Ratio for width."]
+    #[doc = "< Aspect Ratio for height."]
+    pub fn aspect_ratio(&self) -> (u16, u16) {
+        (self.inner.AspectRatioW, self.inner.AspectRatioH)
+    }
+
+    #[doc = "< Picture type as specified in the PicStruct enumerator."]
+    pub fn pic_struct(&self) -> Option<PicStruct> {
+        PicStruct::from_repr(self.inner.PicStruct.into())
+    }
+
+    #[doc = "< Picture type as specified in the PicStruct enumerator."]
+    pub fn chroma_format(&self) -> Option<ChromaFormat> {
+        ChromaFormat::from_repr(self.inner.ChromaFormat.into())
+    }
+
+    #[doc = "< Width of the video frame in pixels. Must be a multiple of 16."]
+    pub fn width(&self) -> u16 {
+        unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.Width }
+    }
+
+    #[doc = "< Height of the video frame in pixels. Must be a multiple of 16 for progressive frame sequence and a multiple of 32 otherwise."]
+    pub fn height(&self) -> u16 {
+        unsafe { self.inner.__bindgen_anon_1.__bindgen_anon_1.Height }
+    }
+
+    #[doc = "< Width in pixels."]
+    #[doc = "< Height in pixels."]
+    pub fn crop(&self) -> (u16, u16) {
+        unsafe {
+            (
+                self.inner.__bindgen_anon_1.__bindgen_anon_1.CropW,
+                self.inner.__bindgen_anon_1.__bindgen_anon_1.CropH,
+            )
+        }
+    }
+}
+
+impl Debug for FrameInfo<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrameInfo")
+        .field("ChannelId", &self.channel_id())
+        .field("BitDepthLuma", &self.bit_depth_luma())
+        .field("BitDepthChroma", &self.bit_depth_chroma())
+        .field("Shift", &self.shift())
+        .field("FrameId", &self.frame_id().TemporalId)
+        .field("FourCC", &self.fourcc())
+        .field("Width", &self.width())
+        .field("Height", &self.height())
+        .field("Crop", &self.crop())
+        .field("FrameRate", &self.frame_rate())
+        .field("AspectRatio", &self.aspect_ratio())
+        .field("PicStruct", &self.pic_struct())
+        .field("ChromaFormat", &self.chroma_format())
+        .finish()
     }
 }
 
 #[derive(Debug)]
-pub struct FrameInfo<'a> {
+pub struct FrameInfoMut<'a> {
     inner: &'a mut ffi::mfxFrameInfo,
 }
 
-impl FrameInfo<'_> {
+impl FrameInfoMut<'_> {
     #[doc = " The unique ID of each VPP channel set by application. It's required that during Init/Reset application fills ChannelId for\neach mfxVideoChannelParam provided by the application and the SDK sets it back to the correspondent\nmfxSurfaceArray::mfxFrameSurface1 to distinguish different channels. It's expected that surfaces for some channels might be\nreturned with some delay so application has to use mfxFrameInfo::ChannelId to distinguish what returned surface belongs to\nwhat VPP channel. Decoder's initialization parameters are always sent through channel with mfxFrameInfo::ChannelId equals to\nzero. It's allowed to skip setting of decoder's parameters for simplified decoding procedure"]
     pub fn channel_id(&self) -> u16 {
         self.inner.ChannelId

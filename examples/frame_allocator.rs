@@ -1,10 +1,10 @@
 ///! This example encodes a yuv file (tests/frozen180.yuv) and produces a HEVC YUV 4:2:0 8 bit file at /tmp/output.hevc
-use std::{env, path::PathBuf, io};
+use std::{env, path::PathBuf, io, sync::{Mutex, RwLock}};
 
 use intel_onevpl_sys::MfxStatus;
 use onevpl::{
     bitstream::Bitstream,
-    constants::{self, IoPattern},
+    constants::{self, IoPattern, MemId, ExtMemFrameType},
     encode::EncodeCtrl,
     frameallocator::FrameAllocator,
     Loader, MfxVideoParams,
@@ -13,6 +13,20 @@ use onevpl::{
 use onevpl::{self, vpp::VppVideoParams};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
+
+struct Frame {
+    id: MemId,
+    buffer: Mutex<Vec<u8>>
+}
+
+impl Frame {
+    pub fn new(size: usize) -> Self {
+        Self {
+            id: 1.into(),
+            buffer: Mutex::new(Vec::with_capacity(size))
+        }
+    }
+}
 
 #[tokio::main]
 pub async fn main() {
@@ -29,7 +43,7 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
 
-    // Set software decoding
+    // Frame allocator is only used when using hardware
     loader.use_hardware(true);
 
     // Set decode HEVC
@@ -38,24 +52,53 @@ pub async fn main() {
     // Set required API version to 2.2
     loader.use_api_version(2, 2);
 
+    let frames: RwLock<Vec<Frame>> = RwLock::new(vec![]);
     let mut session = loader.new_session(0).unwrap();
 
-    let mut frame_allocator = FrameAllocator::new();
-    frame_allocator.set_alloc_callback(Box::new(|request, response| {
-        dbg!(request.num_frame_min());
-        MfxStatus::Unsupported
-    }));
-    frame_allocator.set_lock_callback(Box::new(|id, data| {
-        dbg!("Lock callback called");
-        MfxStatus::Unsupported
-    }));
-    frame_allocator.set_unlock_callback(Box::new(|id, data| {
-        dbg!("UnLock callback called");
-        MfxStatus::Unsupported
-    }));
-    session.set_allocator(frame_allocator).unwrap();
+    // Setup frame allocator
+    {
+        let mut frame_allocator = FrameAllocator::new();
+        
+        frame_allocator.set_alloc_callback(Box::new(|request, response| {
+            println!("Frame Alloc called, System Memory Request: {}", request.type_().unwrap().contains(ExtMemFrameType::SystemMemory));
+            let frame_info = request.info();
+            let frame_size = frame_info.width() as usize * frame_info.height() as usize * 3 / 2;
+            let mut frames = frames.write().expect("Failed to aquire write lock on frame array");
 
-    let mut params = MfxVideoParams::default();
+            // Create n new frames
+            for _ in 0..request.num_frame_min() {
+                println!("Allocated a new frame of size: {frame_size}B");
+                let new_frame = Frame::new(frame_size);
+                frames.push(new_frame)
+            }
+
+            let ids: Vec<MemId> = frames.iter().map(|f| f.id).collect();
+
+            response.set_mids(ids);
+
+            MfxStatus::NoneOrDone
+        }));
+
+        frame_allocator.set_lock_callback(Box::new(|id, data| {
+            println!("Lock callback called");
+            let frames = frames.read().expect("Failed to aquire read lock on frames array");
+            for frame in frames.iter() {
+                if frame.id == id {
+                    let mut lock = frame.buffer.lock().unwrap();
+                    data.set_y(&mut lock);
+                    break;
+                }
+            }
+            MfxStatus::Unsupported
+        }));
+
+        frame_allocator.set_unlock_callback(Box::new(|id, data| {
+            println!("UnLock callback called");
+            MfxStatus::Unsupported
+        }));
+        
+        session.set_allocator(frame_allocator).unwrap();
+    }
 
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
     let mut bitstream = Bitstream::with_codec(&mut buffer, codec);
@@ -78,10 +121,10 @@ pub async fn main() {
     vpp_params.set_out_fourcc(constants::FourCC::YV12);
 
     let decoder = session.decoder(mfx_params).expect("Unable to create decoder");
-    let vpp = session.video_processor(&mut vpp_params).unwrap();
+    let vpp = session.video_processor(&mut vpp_params).expect("Unable to create video processor");
 
     loop {
-        let frame = match decoder.decode(Some(&mut bitstream), None).await {
+        let frame = match decoder.decode(Some(&mut bitstream), None, None).await {
             Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {
                 let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
@@ -115,7 +158,7 @@ pub async fn main() {
     // Now the flush the decoder pass None to decode
     // "The application must set bs to NULL to signal end of stream. The application may need to call this API function several times to drain any internally cached frames until the function returns MFX_ERR_MORE_DATA."
     loop {
-        let mut frame = match decoder.decode(None, None).await {
+        let mut frame = match decoder.decode(None, None, None).await {
             Ok(frame) => frame,
             Err(e) if e == MfxStatus::MoreData => {
                 break;

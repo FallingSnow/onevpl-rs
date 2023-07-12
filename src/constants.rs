@@ -528,9 +528,8 @@ pub enum ContentInfo {
     NonVideoScreen = ffi::MFX_CONTENT_NON_VIDEO_SCREEN,
 }
 
-#[derive(Debug)]
-#[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
-#[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+#[cfg_attr(target_os = "linux", bitmask_enum::bitmask(u32))]
+#[cfg_attr(target_os = "windows", bitmask_enum::bitmask(i32))]
 #[doc = "The ExtMemFrameType enumerator specifies the memory type of frame. It is a bit-ORed value of the following.\n\\verbatim embed:rst\nFor information on working with video memory surfaces, see the :ref:`Working with Hardware Acceleration section<hw-acceleration>`.\n\\endverbatim"]
 pub enum ExtMemFrameType {
     #[doc = "< Memory page for persistent use."]
@@ -567,7 +566,14 @@ pub enum ExtMemFrameType {
 }
 
 /// Memory ID type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MemId(pub ffi::mfxHDL);
+
+impl From<usize> for MemId {
+    fn from(value: usize) -> Self {
+        MemId(unsafe {std::mem::transmute(value)})
+    }
+}
 
 /// Handle type.
 pub struct Handle(pub ffi::mfxHDL);

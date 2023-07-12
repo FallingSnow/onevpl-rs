@@ -33,22 +33,16 @@ pub async fn main() {
 
     let mut loader = Loader::new().unwrap();
     loader.use_hardware(true);
-
     // Set required API version to 2.2
-    loader
-        .set_filter_property(
-            "mfxImplDescription.ApiVersion.Version",
-            constants::ApiVersion::new(2, 2),
-            None,
-        )
-        .unwrap();
+    loader.use_api_version(2, 2);
+
 
     let session = loader.new_session(0).unwrap();
 
     let mut vpp_params = VppVideoParams::default();
-    vpp_params.set_io_pattern(IoPattern::VIDEO_MEMORY);
+    vpp_params.set_io_pattern(IoPattern::IN_SYSTEM_MEMORY | IoPattern::OUT_VIDEO_MEMORY);
 
-    vpp_params.set_in_fourcc(FourCC::IyuvOrI420);
+    vpp_params.set_in_fourcc(FourCC::YV12);
     vpp_params.set_in_picstruct(input_frame_struct);
     vpp_params.set_in_chroma_format(constants::ChromaFormat::YUV420);
     vpp_params.set_in_height(hw_height);

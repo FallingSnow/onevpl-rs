@@ -1,7 +1,7 @@
 use std::{io, path::PathBuf, env};
 
 use intel_onevpl_sys::MfxStatus;
-use onevpl::{self, bitstream::Bitstream, constants, vpp::VppVideoParams, Loader, encode::Encoder, frameallocator::FrameAllocator};
+use onevpl::{self, bitstream::Bitstream, constants, vpp::VppVideoParams, Loader};
 
 const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024 * 2; // 2MB
 
@@ -46,18 +46,7 @@ pub async fn main() {
         println!("\t- Name: {}", i.name());
     });
 
-    let mut session = loader.new_session(0).unwrap();
-
-    // let mut frame_allocator = FrameAllocator::new();
-    // frame_allocator.set_alloc_callback(Box::new(|request, response| {
-    //     dbg!(request.num_frame_min());
-    //     MfxStatus::NoneOrDone
-    // }));
-    // frame_allocator.set_lock_callback(Box::new(|id, frame_data| -> MfxStatus {
-    //     // dbg!(id);
-    //     MfxStatus::NoneOrDone
-    // }));
-    // session.set_allocator(frame_allocator).unwrap();
+    let session = loader.new_session(0).unwrap();
 
     let mut buffer: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE];
     let mut bitstream = Bitstream::with_codec(&mut buffer, constants::Codec::AVC);
@@ -69,10 +58,9 @@ pub async fn main() {
     .unwrap();
     assert_ne!(bytes_read, 0);
 
-    let mut mfx_params = session
+    let mfx_params = session
         .decode_header(&mut bitstream, constants::IoPattern::OUT_VIDEO_MEMORY)
         .unwrap();
-
 
     // Intel hardware will decode into a hardware color format like nv12 for 8 bit
     // content. We will use the hardware video processor to convert this to yuv420
@@ -85,7 +73,7 @@ pub async fn main() {
     let vpp = session.video_processor(&mut vpp_params).unwrap();
 
     loop {
-        let frame = match decoder.decode(Some(&mut bitstream), None).await {
+        let frame = match decoder.decode(Some(&mut bitstream), None, None).await {
             Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {
                 let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
@@ -119,7 +107,7 @@ pub async fn main() {
     // Now the flush the decoder pass None to decode
     // "The application must set bs to NULL to signal end of stream. The application may need to call this API function several times to drain any internally cached frames until the function returns MFX_ERR_MORE_DATA."
     loop {
-        let mut frame = match decoder.decode(None, None).await {
+        let mut frame = match decoder.decode(None, None, None).await {
             Ok(frame) => frame,
             Err(e) if e == MfxStatus::MoreData => {
                 break;

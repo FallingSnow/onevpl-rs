@@ -90,7 +90,7 @@ pub async fn main() {
     let vpp = session.video_processor(&mut vpp_params).unwrap();
 
     loop {
-        let frame = match decoder.decode(Some(&mut bitstream), None).await {
+        let frame = match decoder.decode(Some(&mut bitstream), None, None).await {
             Ok(frame) => Some(frame),
             Err(e) if e == MfxStatus::MoreData => {
                 let free_buffer_len = (bitstream.len() - bitstream.size() as usize) as u64;
@@ -124,7 +124,7 @@ pub async fn main() {
     // Now the flush the decoder pass None to decode
     // "The application must set bs to NULL to signal end of stream. The application may need to call this API function several times to drain any internally cached frames until the function returns MFX_ERR_MORE_DATA."
     loop {
-        let mut frame = match decoder.decode(None, None).await {
+        let mut frame = match decoder.decode(None, None, None).await {
             Ok(frame) => frame,
             Err(e) if e == MfxStatus::MoreData => {
                 break;

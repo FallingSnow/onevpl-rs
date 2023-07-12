@@ -88,6 +88,7 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
     pub async fn decode(
         &self,
         bitstream: Option<&mut Bitstream<'_>>,
+        work_surface: Option<&mut FrameSurface<'_>>,
         timeout: Option<u32>,
     ) -> Result<FrameSurface, MfxStatus> {
         let decode_start = Instant::now();
@@ -104,7 +105,7 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
             };
 
             let mut sync_point: ffi::mfxSyncPoint = std::ptr::null_mut();
-            let surface_work = std::ptr::null_mut();
+            let surface_work = work_surface.map(|s| s.inner as *mut _).unwrap_or(std::ptr::null_mut());
             let session = self.session.inner.0;
 
             let mut output_surface: *mut ffi::mfxFrameSurface1 = std::ptr::null_mut();
@@ -153,7 +154,7 @@ impl<'a: 'b, 'b> Decoder<'a, 'b> {
         Ok(output_surface)
     }
 
-    pub fn surface(&mut self) -> Result<FrameSurface, MfxStatus> {
+    pub fn surface(&self) -> Result<FrameSurface, MfxStatus> {
         let lib = get_library().unwrap();
         let session = self.session.inner.0;
 
@@ -310,7 +311,7 @@ mod tests {
 
         let decoder = session.decoder(params).unwrap();
 
-        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
+        let _frame = decoder.decode(Some(&mut bitstream), None, None).await.unwrap();
     }
 
     #[traced_test]
@@ -373,7 +374,7 @@ mod tests {
             )
             .unwrap();
 
-            let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
+            let _frame = decoder.decode(Some(&mut bitstream), None, None).await.unwrap();
 
             if bytes_read == 0 {
                 break;
@@ -430,6 +431,6 @@ mod tests {
 
         let decoder = session.decoder(params).unwrap();
 
-        let _frame = decoder.decode(Some(&mut bitstream), None).await.unwrap();
+        let _frame = decoder.decode(Some(&mut bitstream), None, None).await.unwrap();
     }
 }
