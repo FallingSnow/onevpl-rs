@@ -141,6 +141,7 @@ pub enum FourCC {
 #[doc = " This enum itemizes hardware acceleration stack to use."]
 #[cfg_attr(target_os = "linux", EnumRepr(type = "u32"))]
 #[cfg_attr(target_os = "windows", EnumRepr(type = "i32"))]
+// #[repf(i32)]
 #[derive(Debug)]
 pub enum AccelerationMode {
     #[doc = "< Hardware acceleration is not applicable."]
@@ -377,7 +378,8 @@ bitflags! {
     }
 }
 
-#[bitmask_enum::bitmask(i32)]
+#[cfg_attr(target_os = "linux", bitmask_enum::bitmask(u32))]
+#[cfg_attr(target_os = "windows", bitmask_enum::bitmask(i32))]
 #[doc = "This enumerator itemizes implementation types.\nThe implementation type is a bit OR'ed value of the base type and any decorative flags.\n@note This enumerator is for legacy dispatcher compatibility only. The new dispatcher does not use it."]
 pub enum MfxImpl {
     #[doc = "< Auto Selection/In or Not Supported/Out."]
